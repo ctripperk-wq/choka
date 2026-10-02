@@ -44,6 +44,8 @@ AMBIG = _P.get("ambiguous", {})      # 同じ地名が複数あるもの → 候
 CENTERS = _P.get("centers", {})      # 県・地域のおおよその中心（店の位置が分からないとき用）
 PLACE_KEYS = sorted(list(PLACES) + list(AMBIG), key=len, reverse=True)
 PREF_RE = re.compile("(" + "|".join(PREFS) + ")")
+OUTSIDE_RE = re.compile("|".join(map(re.escape, _P.get("outside", []))))
+REGION_WORDS = _P.get("region_words", {})
 
 with open(os.path.join(HERE, "data", "fish.json"), encoding="utf-8") as f:
     _F = json.load(f)
@@ -128,10 +130,14 @@ def where(spot, title, body, shop="", shop_area=""):
                 continue  # 店の位置も分からなければ決めない
             pref, area, lat, lng = min(AMBIG[k], key=lambda c: (c[2] - sp[0]) ** 2 + (c[3] - sp[1]) ** 2)
             return pref, area, k, [lat, lng]
-    for t in texts[:2]:  # 県名だけ書いてある場合（本文の県名は店の紹介のことが多いので見ない）
+    for t in texts[:2]:  # 県名だけ書いてある場合
         m = PREF_RE.search(t)
         if m:
             return m.group(1), "", "", None
+    # 本文の県名は店の紹介のこともあるので、「愛媛まで」「島根県」「山口方面」のような書き方だけ見る
+    m = re.search("(" + "|".join(PREFS) + r")(?:県|まで|へ|方面|に遠征)", re.sub(r"〒.*?(?:TEL|ＴＥＬ|☎)\S*", " ", texts[2]))
+    if m:
+        return m.group(1), "", "", None
     return "", "", "", None
 
 
@@ -177,12 +183,21 @@ def make(src, shop, shop_area, title, url, date, body, spot=""):
     spot = spot if spot and not re.fullmatch(r"都道府県地名|釣り場|釣場|船釣り|-|ー|不明", spot) else ""
     fish, kind = classify(title + " " + body)
     pref, area, place, pos = where(spot, title, body, shop, shop_area)
-    by_shop = False
+    by_shop, outside, hint = False, False, ""
     if not pref:
-        pref, area = shop_where(shop, shop_area)
-        by_shop = True
+        texts = " ".join(strip_shops(t) for t in (spot, title, body))
+        hint = next((w for w in REGION_WORDS if w in texts), "")
+        if hint:
+            pass                   # 「山陰」など県まで分からないもの：地方だけ控える
+        elif OUTSIDE_RE.search(texts):
+            outside = True         # 中四国の外での釣果（遠征記など）
+        else:
+            pref, area = shop_where(shop, shop_area)
+            by_shop = True
     return {
         "byShop": by_shop,         # True なら釣り場が分からず、店の地域で分けたもの
+        "outside": outside,
+        "regionHint": hint,        # 「山陰」など、県が分からないときの地方
         "url": url,
         "src": src,
         "shop": shop,
@@ -313,7 +328,71 @@ def pagos():
     return out
 
 
-SOURCES = (("かめや", kameya), ("アングル", angle), ("ポイント", point), ("タイム", ftime), ("パゴス", pagos))
+# ---- つり具のわたなべ（岡山。釣果情報のフィード。遠征記は中四国の外なら外れる） ----
+def watanabe():
+    out = []
+    for it in feed_pages("https://tsurigu-watanabe.jp/category/fishinginfo/feed/", 1):
+        body = it["content"] or it["desc"]
+        out.append(make("わたなべ", "わたなべ", "岡山", it["title"], it["link"], it["date"], body))
+    return out
+
+
+# ---- 釣具のフレンド（愛媛。店ブログ。お知らせも混ざるので、釣れた話だけ拾う） ----
+CATCH_WORDS = re.compile(r"釣れ|釣果|釣って|釣った|釣り上げ|ゲット|お持ち込み|ヒット|上がりました")
+
+
+def friend():
+    out = []
+    for it in feed_pages("https://rssblog.ameba.jp/turigunofurendo/rss20.xml", 1):
+        body = it["content"] or it["desc"]
+        body = re.sub(r"最新情報をLINEで配信中.*$", "", body)
+        if not (CATCH_WORDS.search(it["title"] + body) and fish_of(it["title"] + " " + body)):
+            continue
+        m = re.search(r"フレンド\s*(松山|松前|今治)", body)
+        shop = "フレンド" + (m.group(1) + "店" if m else "")
+        out.append(make("フレンド", shop, "愛媛", it["title"], it["link"], it["date"], body))
+    return out
+
+
+# ---- ジャンプワールド（アングラーズグループの四国の店。ブログの「釣果情報」分類） ----
+ATOM = "{http://www.w3.org/2005/Atom}"
+
+
+def atom_items(xml_text):
+    root = ET.fromstring(xml_text.encode("utf-8"))
+    for e in root.iter(ATOM + "entry"):
+        link = next((l.get("href") for l in e.findall(ATOM + "link") if l.get("rel", "alternate") == "alternate"), "")
+        yield {
+            "title": e.findtext(ATOM + "title") or "",
+            "link": link,
+            "date": datetime.fromisoformat((e.findtext(ATOM + "published") or e.findtext(ATOM + "updated")).replace("Z", "+00:00")),
+            "cats": [c.get("term") or "" for c in e.findall(ATOM + "category")],
+            "content": plain(e.findtext(ATOM + "content") or e.findtext(ATOM + "summary")),
+        }
+
+
+def jumpworld():
+    out = []
+    for blog, area in (("imabari", "愛媛"), ("jump2", "香川")):
+        try:
+            items = list(atom_items(get(f"https://anglers.lekumo.biz/{blog}/cyouka/atom.xml")))
+        except Exception as e:
+            log("jumpworld", blog, e)
+            continue
+        for it in items:
+            body = it["content"]
+            # 毎回付く店の住所・イベント案内より後ろは、釣り場の情報ではないので切る
+            body = re.split(r"☆?イベント情報|\d{4}アオリイカフォトダービー|ジャンプワールド\S{1,5}店\s*(?:〒|香川県|愛媛県|高松市)", body)[0]
+            body = re.sub(r"この投稿をInstagramで見る|\S*\(@\w+\)がシェアした投稿|☆JUMP全店.*?☆", " ", body)
+            m = re.search(r"ジャンプワールド\s*([^\s　(（@]{1,5}店)", body)
+            shop_cat = next((c for c in it["cats"] if c.endswith("店")), "")
+            shop = "ジャンプワールド" + (shop_cat or (m.group(1) if m else ""))
+            out.append(make("ジャンプ", shop, area, it["title"], it["link"], it["date"], body))
+    return out
+
+
+SOURCES = (("かめや", kameya), ("アングル", angle), ("ポイント", point), ("タイム", ftime), ("パゴス", pagos),
+           ("わたなべ", watanabe), ("フレンド", friend), ("ジャンプ", jumpworld))
 SHOP_AREAS = set(PREFS) | {"山陰", "山陽", "四国", "岡山・広島"}
 
 
@@ -323,13 +402,14 @@ def main():
             old = json.load(f)
     except (OSError, ValueError):
         old = {}
-    by_url = {i["url"]: i for i in old.get("items", []) if "shopArea" in i}  # 古い形式の行は作り直す
+    by_url = {i["url"]: i for i in old.get("items", []) if "outside" in i}  # 古い形式の行は作り直す
     status = {}
     for name, fn in SOURCES:
         try:
             items = fn()
             # 中四国で釣ったもの、または場所不明でも中四国の店のもの
-            keep = [i for i in items if i["pref"] in PREFS or (not i["pref"] and i["shopArea"] in SHOP_AREAS)]
+            keep = [i for i in items if not i["outside"] and
+                    (i["pref"] in PREFS or i["regionHint"] or (not i["pref"] and i["shopArea"] in SHOP_AREAS))]
             status[name] = len(keep)
             for i in keep:
                 by_url[i["url"]] = i

@@ -156,8 +156,9 @@ function inRegion(i) {
   const f = S.filter;
   if (f.region === "all") return true;
   const prefs = regionPrefs(f.region);
-  if (!i.pref) {  // 釣った場所も店の県も分からないもの（「山陰」の店など）は、店の地域で判断する
-    const sp = SHOP_AREA_PREFS[i.shopArea] || [i.shopArea];
+  if (!i.pref) {  // 「山陰」とだけ書かれた釣果や、県の分からない店のものは、地方で判断する
+    const key = i.regionHint || i.shopArea;
+    const sp = SHOP_AREA_PREFS[key] || [key];
     return !f.area && sp.some(p => prefs.includes(p));
   }
   if (!prefs.includes(i.pref)) return false;
@@ -226,6 +227,9 @@ function renderLinks() {
     <div class="linkgrid">${prefs.map(p => `<span>${esc(p)}</span>
       <a href="https://anglers.jp/prefectures/${ANGLERS_ID[p]}/catches" target="_blank" rel="noopener">アングラーズ</a>
       <a href="https://fishing.ne.jp/fishingpost/area/${KANPARI_SLUG[p]}" target="_blank" rel="noopener">カンパリ</a>`).join("")}</div>
+    ${prefs.includes("愛媛") ? `<p style="margin:4px 0">つり天国（松山）はInstagramのみ：
+      <a href="https://www.instagram.com/tsuritengoku_higashinagato/" target="_blank" rel="noopener">東長戸店</a>
+      <a href="https://www.instagram.com/tsuritengoku_kamogawa/" target="_blank" rel="noopener">鴨川店</a></p>` : ""}
     <p class="note">店の釣果は各店の公開ページから見出しと短い抜粋だけを集めています。写真と全文は元の記事でご覧ください。
     地域は釣った場所（釣り場名・本文の地名）で分けています。同じ地名が複数ある場合と、場所が書かれていない場合は、投稿した店の地域で分けています。</p>`;
 }
@@ -239,6 +243,7 @@ function setFilter(patch) {
 
 /* ---------- 一覧 ---------- */
 function placeLine(i) {
+  if (!i.pref && i.regionHint) return `📍${esc(i.regionHint)}<span class="unknown">（県の記載なし）</span>`;
   if (i.byShop) {
     return `<span class="unknown">📍場所の記載なし（店の地域：${esc(i.pref ? i.pref + (i.area ? "・" + i.area : "") : i.shopArea)}）</span>`;
   }
@@ -576,7 +581,8 @@ function jitter(key) {
 const tiles = () => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 18, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 });
-const SRC_COLOR = { かめや: "--kameya", アングル: "--angle", ポイント: "--point", タイム: "--time", パゴス: "--pagos" };
+const SRC_COLOR = { かめや: "--kameya", アングル: "--angle", ポイント: "--point", タイム: "--time", パゴス: "--pagos",
+  わたなべ: "--watanabe", フレンド: "--friend", ジャンプ: "--jump" };
 let lastFitKey = "";
 function renderMap() {
   if (S.tab !== "map") return;

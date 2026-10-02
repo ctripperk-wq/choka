@@ -14,7 +14,7 @@
   --bg:#f3f6f8; --card:#fff; --ink:#17232b; --sub:#5b6b76; --line:#dde4e9;
   --accent:#0b5f86; --accent-ink:#fff; --accent-soft:#e2f0f7;
   --warn:#b54708; --danger:#c92a2a; --ok:#2b8a3e;
-  --kameya:#d9480f; --angle:#1971c2; --point:#2b8a3e; --mine:#9c36b5; --time:#c2255c; --pagos:#5f3dc4;
+  --kameya:#d9480f; --angle:#1971c2; --point:#2b8a3e; --mine:#9c36b5; --time:#c2255c; --pagos:#5f3dc4; --watanabe:#0b7285; --friend:#a61e4d; --jump:#e67700;
   --shadow:0 1px 3px rgba(0,0,0,.08);
   color-scheme:light;
 }
@@ -22,14 +22,14 @@
   --bg:#0f1519; --card:#182228; --ink:#e6edf1; --sub:#98a8b3; --line:#2a3740;
   --accent:#4fb3e0; --accent-ink:#06202c; --accent-soft:#16323f;
   --warn:#f5a25d; --danger:#ff8787; --ok:#69db7c;
-  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6; --time:#f06595; --pagos:#9775fa;
+  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6; --time:#f06595; --pagos:#9775fa; --watanabe:#3bc9db; --friend:#f783ac; --jump:#ffa94d;
   --shadow:none; color-scheme:dark;
 }}
 :root[data-theme="dark"]{
   --bg:#0f1519; --card:#182228; --ink:#e6edf1; --sub:#98a8b3; --line:#2a3740;
   --accent:#4fb3e0; --accent-ink:#06202c; --accent-soft:#16323f;
   --warn:#f5a25d; --danger:#ff8787; --ok:#69db7c;
-  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6; --time:#f06595; --pagos:#9775fa;
+  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6; --time:#f06595; --pagos:#9775fa; --watanabe:#3bc9db; --friend:#f783ac; --jump:#ffa94d;
   --shadow:none; color-scheme:dark;
 }
 *{box-sizing:border-box}
@@ -74,6 +74,7 @@ select.small{border:1px solid var(--line);background:var(--card);border-radius:1
 .card img.thumb{width:84px;height:84px;object-fit:cover;border-radius:8px;flex:none;background:var(--line)}
 .badge{display:inline-block;font-size:12px;border-radius:6px;padding:1px 6px;color:#fff;font-weight:600}
 .b-タイム{background:var(--time)} .b-パゴス{background:var(--pagos)}
+.b-わたなべ{background:var(--watanabe)} .b-フレンド{background:var(--friend)} .b-ジャンプ{background:var(--jump)}
 .b-かめや{background:var(--kameya)} .b-アングル{background:var(--angle)} .b-ポイント{background:var(--point)} .b-みんな{background:var(--mine)}
 .tag{display:inline-block;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:0 6px;margin:4px 4px 0 0}
 .tag.fish{border-color:var(--accent);color:var(--accent)}
@@ -233,6 +234,9 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
       <span><i class="dot" style="background:var(--point)"></i>ポイント</span>
       <span><i class="dot" style="background:var(--time)"></i>タイム</span>
       <span><i class="dot" style="background:var(--pagos)"></i>パゴス</span>
+      <span><i class="dot" style="background:var(--watanabe)"></i>わたなべ</span>
+      <span><i class="dot" style="background:var(--friend)"></i>フレンド</span>
+      <span><i class="dot" style="background:var(--jump)"></i>ジャンプ</span>
       <span>📍 みんなの投稿</span>
       <span>（店の釣果は地名からのおおよその位置）</span>
     </div>
@@ -259,6 +263,6 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.min.js"></script>
 <script src="config.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
