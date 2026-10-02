@@ -105,7 +105,7 @@ select.small.grow{flex:1;min-width:0}
 .bars{display:flex;align-items:flex-end;gap:3px;height:110px;padding-top:6px}
 .bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
 .bar i{display:block;width:100%;background:var(--accent);border-radius:3px 3px 0 0;min-height:1px}
-.bar span{font-size:10px;color:var(--sub);margin-top:3px}
+.bar span{font-size:10px;color:var(--sub);margin-top:3px;white-space:nowrap;overflow:hidden;max-width:100%}
 .hbar{display:grid;grid-template-columns:minmax(7em,40%) 1fr 2.2em;gap:8px;align-items:center;font-size:14px;margin:5px 0}
 .hbar .k{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hbar .v{height:12px;background:var(--accent-soft);border-radius:6px;overflow:hidden}
@@ -208,7 +208,8 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
     <div class="seg">
       <select class="small" id="fDays" aria-label="期間">
         <option value="3">3日</option><option value="7" selected>1週間</option>
-        <option value="14">2週間</option><option value="45">全部</option>
+        <option value="14">2週間</option><option value="30">1か月</option><option value="90">3か月</option>
+        <option value="365">1年</option><option value="99999">すべて</option>
       </select>
       <select class="small" id="fKind" aria-label="釣り方">
         <option value="all">釣り方:全部</option><option value="岸">堤防・磯</option>
@@ -263,6 +264,6 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.min.js"></script>
 <script src="config.js?v=4"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

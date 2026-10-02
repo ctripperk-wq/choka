@@ -21,7 +21,13 @@ from email.utils import parsedate_to_datetime
 
 JST = timezone(timedelta(hours=9))
 UA = "Mozilla/5.0 (compatible; choka-matome/1.0; personal use)"
-KEEP_DAYS = 45
+KEEP_DAYS = 365
+# 過去分を一度だけ取り込むとき： BACKFILL_DAYS=365 python fetch.py
+# 日付がその日数前に届くまでページをめくる（ふだんの2時間おきの実行では最新の数ページだけ）。
+BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS") or 0)
+DEEP_CUTOFF = datetime.now(JST) - timedelta(days=BACKFILL_DAYS) if BACKFILL_DAYS else None
+# 別の choka.json の釣果を混ぜる（取り込み中に自動更新が入ったときの合流用）
+MERGE_FILE = os.environ.get("MERGE_FILE")
 EXCERPT_LEN = 100
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "data", "choka.json")
@@ -72,7 +78,7 @@ def get(url):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "ja"})
     with urllib.request.urlopen(req, timeout=30) as r:
         body = r.read()
-    time.sleep(1.5)
+    time.sleep(2.0 if DEEP_CUTOFF else 1.5)
     return body.decode("utf-8", "replace")
 
 
@@ -230,17 +236,28 @@ def rss_items(xml_text):
 
 
 def feed_pages(url, pages):
-    out = []
-    for page in range(1, pages + 1):
+    out, seen = [], set()
+    limit = 1000 if DEEP_CUTOFF else pages
+    for page in range(1, limit + 1):
         u = url if page == 1 else url + ("&" if "?" in url else "?") + f"paged={page}"
         try:
             items = list(rss_items(get(u)))
         except Exception as e:
             log("feed", u, e)
             break
-        out += items
+        new = [i for i in items if i["link"] not in seen]
+        if not new:  # 同じページが返ってきたら終わり（ページめくりに対応していないフィード）
+            break
+        seen.update(i["link"] for i in new)
+        out += new
         if len(items) < 10:
             break
+        if DEEP_CUTOFF:
+            oldest = min(i["date"] for i in items)
+            if page % 20 == 0:
+                log("  ", url, page, "ページ目", oldest.date())
+            if oldest < DEEP_CUTOFF:
+                break
     return out
 
 
@@ -282,7 +299,7 @@ POINT_AREAS = (("74", "山陰"), ("93", "岡山"), ("92", "広島"), ("91", "山
 def point():
     out = []
     for area_id, area in POINT_AREAS:
-        for page in (1, 2):
+        for page in range(1, 1000 if DEEP_CUTOFF else 3):
             url = f"https://www.point-i.jp/fishing_infos?area_id={area_id}&shop_id=0"
             if page > 1:
                 url += f"&page={page}"
@@ -291,7 +308,14 @@ def point():
             except Exception as e:
                 log("point", area, page, e)
                 break
-            for pid, title, tag, date, body in CARD_RE.findall(page_html):
+            cards = CARD_RE.findall(page_html)
+            if not cards:
+                break
+            if DEEP_CUTOFF:
+                oldest = datetime.strptime(cards[-1][3].strip(), "%Y/%m/%d").replace(tzinfo=JST)
+                if page % 20 == 0:
+                    log("   ポイント", area, page, "ページ目", oldest.date())
+            for pid, title, tag, date, body in cards:
                 shop = plain(tag).split(" ")[0]
                 body = plain(body)
                 d = datetime.strptime(date.strip(), "%Y/%m/%d").replace(hour=12, tzinfo=JST)
@@ -302,6 +326,8 @@ def point():
                     item["text"] = cut(" ".join(x for x in (fishes, size) if x))
                 item["dateOnly"] = True
                 out.append(item)
+            if DEEP_CUTOFF and oldest < DEEP_CUTOFF:
+                break
     return out
 
 
@@ -371,23 +397,70 @@ def atom_items(xml_text):
         }
 
 
+def jw_clean(body):
+    # 毎回付く店の住所・イベント案内より後ろは、釣り場の情報ではないので切る
+    body = re.split(r"☆?イベント情報|\d{4}アオリイカフォトダービー|ジャンプワールド\S{1,5}店\s*(?:〒|香川県|愛媛県|高松市)", body)[0]
+    return re.sub(r"この投稿をInstagramで見る|\S*\(@\w+\)がシェアした投稿|☆JUMP全店.*?☆", " ", body)
+
+
+def jw_item(title, link, date, cats, body, area):
+    body = jw_clean(body)
+    m = re.search(r"ジャンプワールド\s*([^\s　(（@]{1,5}店)", body)
+    shop_cat = next((c for c in cats if c.endswith("店")), "")
+    shop = "ジャンプワールド" + (shop_cat or (m.group(1) if m else ""))
+    return make("ジャンプ", shop, area, title, link, date, body)
+
+
+JW_BLOGS = (("imabari", "愛媛"), ("jump2", "香川"))
+JW_ENTRY_RE = re.compile(
+    r'<h2 class="entry-header"><a href="([^"]+)">(.*?)<span class="date-category">(.*?)</span>'
+    r'<span class="date-header">(\d{4})-(\d\d)-(\d\d) (AM|PM)(\d\d):(\d\d)</span>', re.S)
+
+
+def jw_archive(blog, area):
+    """過去分：月ごとのページ（10件ずつ）を、1年前の月までさかのぼって読む。"""
+    out = []
+    y, mo = datetime.now(JST).year, datetime.now(JST).month
+    while (y, mo) >= (DEEP_CUTOFF.year, DEEP_CUTOFF.month):
+        for page in range(1, 30):
+            url = f"https://anglers.lekumo.biz/{blog}/{y}/{mo:02d}/" + (f"?p={page}" if page > 1 else "")
+            try:
+                h = get(url)
+            except Exception as e:
+                log("jumpworld", url, e)
+                break
+            chunks = h.split('<div class="entry" id="')[1:]
+            for ch in chunks:
+                m = JW_ENTRY_RE.search(ch)
+                if not m:
+                    continue
+                link, title, cat, yy, mm, dd, ap, hh, mi = m.groups()
+                cats = re.findall(r"（([^）]+)）", plain(cat))
+                if "釣果情報" not in cats:
+                    continue
+                hour = int(hh) % 12 + (12 if ap == "PM" else 0)
+                date = datetime(int(yy), int(mm), int(dd), hour, int(mi), tzinfo=JST)
+                body = plain(ch.split('class="entry-body"', 1)[-1].split('class="entry-footer"', 1)[0])
+                out.append(jw_item(plain(title), link, date, cats, body, area))
+            if len(chunks) < 10:
+                break
+        y, mo = (y, mo - 1) if mo > 1 else (y - 1, 12)
+    return out
+
+
 def jumpworld():
     out = []
-    for blog, area in (("imabari", "愛媛"), ("jump2", "香川")):
+    for blog, area in JW_BLOGS:
+        if DEEP_CUTOFF:
+            out += jw_archive(blog, area)
+            continue
         try:
             items = list(atom_items(get(f"https://anglers.lekumo.biz/{blog}/cyouka/atom.xml")))
         except Exception as e:
             log("jumpworld", blog, e)
             continue
         for it in items:
-            body = it["content"]
-            # 毎回付く店の住所・イベント案内より後ろは、釣り場の情報ではないので切る
-            body = re.split(r"☆?イベント情報|\d{4}アオリイカフォトダービー|ジャンプワールド\S{1,5}店\s*(?:〒|香川県|愛媛県|高松市)", body)[0]
-            body = re.sub(r"この投稿をInstagramで見る|\S*\(@\w+\)がシェアした投稿|☆JUMP全店.*?☆", " ", body)
-            m = re.search(r"ジャンプワールド\s*([^\s　(（@]{1,5}店)", body)
-            shop_cat = next((c for c in it["cats"] if c.endswith("店")), "")
-            shop = "ジャンプワールド" + (shop_cat or (m.group(1) if m else ""))
-            out.append(make("ジャンプ", shop, area, it["title"], it["link"], it["date"], body))
+            out.append(jw_item(it["title"], it["link"], it["date"], it["cats"], it["content"], area))
     return out
 
 
@@ -403,6 +476,12 @@ def main():
     except (OSError, ValueError):
         old = {}
     by_url = {i["url"]: i for i in old.get("items", []) if "outside" in i}  # 古い形式の行は作り直す
+    if MERGE_FILE:
+        with open(MERGE_FILE, encoding="utf-8") as f:
+            extra = [i for i in json.load(f).get("items", []) if "outside" in i]
+        for i in extra:
+            by_url.setdefault(i["url"], i)
+        log("合流", MERGE_FILE, len(extra), "件")
     status = {}
     for name, fn in SOURCES:
         try:

@@ -1,0 +1,25 @@
+name: 投稿の容量を整理
+
+on:
+  schedule:
+    - cron: "0 19 * * *"   # 毎日 4:00（日本時間）
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "1 にすると消さずに、消す予定だけ表示"
+        default: "0"
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 容量を見て、いっぱいに近ければ古いものから消す
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: python cleanup.py

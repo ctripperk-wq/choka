@@ -60,6 +60,7 @@ const S = {
 function loadFilter() {
   const f = Object.assign({ region: "all", area: "", days: 7, kind: "all", src: "all", fish: "", q: "" }, store.get("filter", {}));
   if (f.pref) { if (f.pref !== "all") f.region = f.pref; delete f.pref; }  // 以前の保存形式
+  if (![3, 7, 14, 30, 90, 365, 99999].includes(Number(f.days))) f.days = f.days > 14 ? 30 : 7;  // 以前の「全部」(45日)など
   return f;
 }
 
@@ -91,13 +92,22 @@ async function loadShop() {
   $("#upd").innerHTML = S.updated ? `店の釣果<br>${esc(fmtDate(S.updated))} 更新` : "";
 }
 
+// 投稿は期限なしで全部読む（サーバーは1回1000件までなので分けて読む）
+async function fetchAllCatches(filter) {
+  const rows = [];
+  for (let from = 0; from < 20000; from += 1000) {
+    let q = sb.from("catches").select("*").order("caught_at", { ascending: false }).range(from, from + 999);
+    if (filter) q = filter(q);
+    const { data, error } = await q;
+    if (error) { console.warn(error); break; }
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return rows;
+}
 async function loadPosts() {
   if (!sb) return;
-  const since = new Date(Date.now() - 60 * 864e5).toISOString();
-  const { data, error } = await sb.from("catches").select("*")
-    .gte("caught_at", since).order("caught_at", { ascending: false }).limit(1000);
-  if (error) { console.warn(error); return; }
-  S.posts = (data || []).map(postItem);
+  S.posts = (await fetchAllCatches()).map(postItem);
   await mergeExactSpots(S.posts);
   await signPhotos(S.posts.flatMap(p => p.row.photos || []));
 }
@@ -187,6 +197,8 @@ function fishCounts(items) {
   return cnt;
 }
 
+const PERIODS = { 3: "3日", 7: "1週間", 14: "2週間", 30: "1か月", 90: "3か月", 365: "1年", 99999: "すべての期間" };
+const periodLabel = () => PERIODS[S.filter.days] || S.filter.days + "日";
 function regionLabel() {
   const f = S.filter;
   if (f.region === "all") return "中四国";
@@ -273,6 +285,7 @@ function cardHtml(i) {
       <div class="meta"><span class="badge b-みんな">投稿</span>${esc(r.nickname)}・${esc(fmtDate(r.caught_at))}
         ${r.is_public ? "" : `<span class="private">🔒非公開</span>`}</div>
       <div class="title">${esc(r.fish)}${r.size ? " " + esc(r.size) : ""}${r.count ? " × " + esc(r.count) : ""}</div>
+      ${r.photos_removed ? `<div class="note">📷 古い写真は容量のため削除しました</div>` : ""}
       ${r.spot || i.pref ? `<div class="meta">📍${esc([r.spot, i.pref ? "（" + i.pref + "）" : ""].filter(Boolean).join(""))}</div>` : ""}
       <div>${r.weather ? `<span class="tag">${esc(weatherIcon(r.weather))}${esc(r.weather)}${r.temp != null ? " " + esc(r.temp) + "℃" : ""}</span>` : ""}
         ${r.tide_name ? `<span class="tag">🌊${esc(r.tide_name)}</span>` : ""}<span class="tag">${kindLabel(r.kind)}</span></div>
@@ -332,7 +345,7 @@ function renderFishResults() {
         ${(f.alias || []).length ? `<small>${esc(f.alias.slice(0, 4).join("・"))}</small>` : ""}</button>`).join("")}</div></div>`;
   }).join("");
   box.innerHTML = `
-    ${!q && top.length ? `<div class="fgroup"><h3>${esc(regionLabel())}でいま多い魚（${S.filter.days}日）</h3>
+    ${!q && top.length ? `<div class="fgroup"><h3>${esc(regionLabel())}でいま多い魚（${esc(periodLabel())}）</h3>
       <div class="chips wrap">${top.map(([n, c]) => `<button class="chip" data-fish="${esc(n)}">${esc(n)}<span class="n">${c}</span></button>`).join("")}</div></div>` : ""}
     ${groupHtml || `<div class="empty">「${esc(q)}」に当たる魚が見つかりません</div>`}
     <p class="note">件数は上の地域・期間・釣り方の条件で数えています。</p>`;
@@ -353,12 +366,23 @@ function renderFishDetail(el, name) {
   // 釣り方
   const kinds = { 岸: 0, 船: 0, 淡水: 0 };
   items.forEach(i => { kinds[i.kind] = (kinds[i.kind] || 0) + 1; });
-  // 日ごと（最大14日）
-  const days = Math.min(S.filter.days, 14), today = new Date(); today.setHours(0, 0, 0, 0);
+  // 推移：2週間までは日ごと、3か月までは週ごと、それより長ければ月ごと
+  const span = S.filter.days, now0 = new Date(); now0.setHours(0, 0, 0, 0);
+  const unit = span <= 14 ? "日" : span <= 90 ? "週" : "月";
   const daily = [];
-  for (let k = days - 1; k >= 0; k--) {
-    const d0 = new Date(today.getTime() - k * 864e5), d1 = new Date(d0.getTime() + 864e5);
-    daily.push({ d: d0, n: items.filter(i => { const t = new Date(i.date); return t >= d0 && t < d1; }).length });
+  if (unit === "月") {
+    const oldest = items.length ? new Date(items[items.length - 1].date) : now0;
+    const months = Math.min(24, Math.max(1, span > 400 ? (now0.getFullYear() - oldest.getFullYear()) * 12 + now0.getMonth() - oldest.getMonth() + 1 : Math.ceil(span / 30.4)));
+    for (let k = months - 1; k >= 0; k--) {
+      const d0 = new Date(now0.getFullYear(), now0.getMonth() - k, 1), d1 = new Date(d0.getFullYear(), d0.getMonth() + 1, 1);
+      daily.push({ label: `${d0.getMonth() + 1}月`, tip: `${d0.getFullYear()}年${d0.getMonth() + 1}月`, n: items.filter(i => { const t = new Date(i.date); return t >= d0 && t < d1; }).length });
+    }
+  } else {
+    const step = unit === "日" ? 1 : 7, count = Math.ceil(span / step);
+    for (let k = count - 1; k >= 0; k--) {
+      const d1 = new Date(now0.getTime() + 864e5 - k * step * 864e5), d0 = new Date(d1.getTime() - step * 864e5);
+      daily.push({ label: unit === "日" ? `${d0.getDate()}` : `${d0.getMonth() + 1}/${d0.getDate()}`, tip: `${d0.getMonth() + 1}/${d0.getDate()}〜`, n: items.filter(i => { const t = new Date(i.date); return t >= d0 && t < d1; }).length });
+    }
   }
   const maxD = Math.max(1, ...daily.map(x => x.n));
   el.innerHTML = `
@@ -366,11 +390,11 @@ function renderFishDetail(el, name) {
       <button class="btn" data-fishlist="${esc(name)}">📋 一覧</button><button class="btn" data-fishmap="${esc(name)}">🗺️ 地図</button></div>
     <h2 class="fishname">${esc(name)}</h2>
     ${(f.alias || []).length ? `<p class="note">別名・含むもの：${esc(f.alias.join("、"))}</p>` : ""}
-    <p><b>${esc(regionLabel())}</b>・${S.filter.days}日間で <b style="font-size:20px">${items.length}</b> 件</p>
+    <p><b>${esc(regionLabel())}</b>・${esc(periodLabel())}で <b style="font-size:20px">${items.length}</b> 件</p>
     ${items.length ? `
-    <div class="box"><h3>日ごとの件数</h3>
-      <div class="bars">${daily.map(x => `<div class="bar" title="${x.d.getMonth() + 1}/${x.d.getDate()} ${x.n}件">
-        <i style="height:${Math.round(x.n / maxD * 100)}%"></i><span>${x.d.getDate()}</span></div>`).join("")}</div></div>
+    <div class="box"><h3>${unit}ごとの件数</h3>
+      <div class="bars">${daily.map(x => `<div class="bar" title="${esc(x.tip)} ${x.n}件">
+        <i style="height:${Math.round(x.n / maxD * 100)}%"></i><span>${esc(x.label)}</span></div>`).join("")}</div></div>
     <div class="box"><h3>釣れている場所</h3>${areas.map(([k, n]) => `
       <div class="hbar"><span class="k">${esc(k)}</span><span class="v"><i style="width:${Math.round(n / maxA * 100)}%"></i></span><span class="n">${n}</span></div>`).join("")}</div>
     <div class="box"><h3>釣り方</h3><div class="row" style="gap:16px">${Object.entries(kinds).filter(x => x[1]).map(([k, n]) => `<span>${esc(kindLabel(k))} <b>${n}</b></span>`).join("")}</div></div>
@@ -657,6 +681,7 @@ function showPost(id) {
     ["天気", [r.weather, r.temp != null ? r.temp + "℃" : "", r.wind].filter(Boolean).join("・")],
     ["潮", [r.tide_name, r.tide_info].filter(Boolean).join("・")], ["メモ", r.memo],
     ["公開", r.is_public ? "公開" + (r.blurred ? "（位置は約1kmぼかし）" : "") : "🔒非公開（自分だけ）"],
+    ["写真", r.photos_removed ? "古い写真は容量のため削除しました" : ""],
   ].filter(x => x[1]);
   openSheet(`
     <div class="row"><b style="flex:1;font-size:18px">${esc(r.fish)}</b><button class="btn" data-close>閉じる</button></div>
@@ -1116,9 +1141,8 @@ async function renderMy() {
       <button class="btn" id="myOut">ログアウト</button></div></div>
     <div id="myList"><p class="note">読み込み中…</p></div>`;
   $("#myOut").onclick = () => sb.auth.signOut();
-  const { data, error } = await sb.from("catches").select("*").eq("user_id", S.me.id).order("caught_at", { ascending: false }).limit(500);
-  if (error) { $("#myList").innerHTML = `<div class="msg err">${esc(error.message)}</div>`; return; }
-  myPosts = (data || []).map(postItem);
+  const data = await fetchAllCatches(q => q.eq("user_id", S.me.id));
+  myPosts = data.map(postItem);
   await mergeExactSpots(myPosts);
   await signPhotos(myPosts.flatMap(p => p.row.photos || []));
   if (!myPosts.length) { $("#myList").innerHTML = `<div class="empty">まだ投稿がありません。<br>「投稿」タブから記録できます。</div>`; return; }
