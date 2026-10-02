@@ -1,8 +1,12 @@
-"""釣具店の釣果を集めて data/choka.json にまとめる。
+"""中四国の釣具店の釣果を集めて data/choka.json にまとめる。
 
 GitHub Actions から2時間おきに動かす。標準ライブラリだけで動く。
-相手サイトに負担をかけないよう、1回の実行で読むのは十数ページまで、
+相手サイトに負担をかけないよう、1回の実行で読むのは30ページ弱まで、
 1リクエストごとに少し待つ。写真と本文は保存せず、短い抜粋とリンクだけ持つ。
+
+県・エリアは「店の場所」ではなく「釣った場所」で決める。
+釣り場名・見出し・本文に data/places.json の地名があればその県・エリア、
+県名だけ書いてあればその県、どちらもなければ店の地域（店名の地名・県）で分ける。
 """
 import html
 import json
@@ -19,59 +23,43 @@ JST = timezone(timedelta(hours=9))
 UA = "Mozilla/5.0 (compatible; choka-matome/1.0; personal use)"
 KEEP_DAYS = 45
 EXCERPT_LEN = 100
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "choka.json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(HERE, "data", "choka.json")
 
 NS = {
     "dc": "http://purl.org/dc/elements/1.1/",
     "content": "http://purl.org/rss/1.0/modules/content/",
 }
 
-# かめやの店名→県。カテゴリAPIが読めなかったときの控え。
+with open(os.path.join(HERE, "data", "places.json"), encoding="utf-8") as f:
+    _P = json.load(f)
+REGIONS = _P["regions"]
+PREFS = [p for ps in REGIONS.values() for p in ps]
+PLACES = {}  # 地名 → (県, エリア, 緯度, 経度)
+for _pref, _areas in _P["places"].items():
+    for _area, _names in _areas.items():
+        for _name, (_lat, _lng) in _names.items():
+            PLACES[_name] = (_pref, _area, _lat, _lng)
+AMBIG = _P.get("ambiguous", {})      # 同じ地名が複数あるもの → 候補
+CENTERS = _P.get("centers", {})      # 県・地域のおおよその中心（店の位置が分からないとき用）
+PLACE_KEYS = sorted(list(PLACES) + list(AMBIG), key=len, reverse=True)
+PREF_RE = re.compile("(" + "|".join(PREFS) + ")")
+
+with open(os.path.join(HERE, "data", "fish.json"), encoding="utf-8") as f:
+    _F = json.load(f)
+FISH = [(x["name"], x["group"], re.compile(x["re"]), x.get("excl", [])) for x in _F["fish"]]
+FRESH_GROUP = "淡水"
+BOAT_RE = re.compile(r"船|遊漁|乗合|沖(?!堤)|ジギング|タイラバ|鯛ラバ|ティップラン|オフショア|テンヤ|スルルー|イカメタル")
+FRESH_RE = re.compile(r"ダム|湖(?!畔の宿)|管理釣り場|渓流|河川上流")
+
+# 店名 → 店のある地域（釣り場が分からないときの控え）
 KAMEYA_SHOPS = {
     "広島": ["五日市店", "サファ福山西店", "三次店", "八木店", "呉店", "商工センター店", "東広島店", "福山店", "総本店"],
     "山口": ["下松店", "大島店", "岩国通津店", "防府店"],
+    "岡山": ["岡山妹尾店", "岡山平井店"],
+    "鳥取": ["鳥取店", "米子店"],
+    "島根": ["浜田店", "出雲店", "松江店"],
 }
-
-# 表示名 → 本文中の言い方（正規表現）
-FISH = [
-    ("アオリイカ", r"アオリ|秋イカ|新子イカ"),
-    ("イカ(その他)", r"ケンサキ|ヒイカ|コウイカ|モンゴウ|スルメイカ|ヤリイカ|ジンドウ"),
-    ("タコ", r"タコ|蛸|イイダコ"),
-    ("アジ", r"アジ|鯵"),
-    ("サバ", r"サバ|鯖"),
-    ("イワシ", r"イワシ|鰯"),
-    ("サヨリ", r"サヨリ|さより"),
-    ("キス", r"キス|鱚"),
-    ("カワハギ", r"カワハギ|ハゲ釣"),
-    ("ハゼ", r"ハゼ"),
-    ("メバル", r"メバル|メバリング"),
-    ("カサゴ", r"カサゴ|ガシラ"),
-    ("ハタ類", r"キジハタ|アコウ|オオモンハタ|アカハタ|(?<![ヒ])ハタ(?!ハタ)"),
-    ("チヌ", r"チヌ|クロダイ|キビレ|チニング"),
-    ("グレ", r"グレ|メジナ|クロ(?![ダソムマ])"),
-    ("マダイ", r"マダイ|真鯛|タイラバ|鯛ラバ"),
-    ("イシダイ", r"イシダイ|サンバソウ|イシガキダイ"),
-    ("タチウオ", r"タチウオ|太刀魚|タチ魚"),
-    ("サワラ", r"サワラ|サゴシ|鰆"),
-    ("ブリ類", r"ブリ(?!ーフ)|ハマチ|ヤズ|ツバス|メジロ|青物"),
-    ("ヒラマサ", r"ヒラマサ"),
-    ("カンパチ", r"カンパチ|ネリゴ"),
-    ("シーバス", r"シーバス|スズキ|セイゴ|フッコ"),
-    ("ヒラメ", r"ヒラメ"),
-    ("マゴチ", r"コチ"),
-    ("カレイ", r"カレイ"),
-    ("アナゴ", r"アナゴ|穴子"),
-    ("イサキ", r"イサキ"),
-    ("アマダイ", r"アマダイ"),
-    ("アユ", r"鮎|アユ"),
-    ("ブラックバス", r"ブラックバス|(?<!シー)バス(?!ケット|タオル|停)"),
-    ("トラウト", r"トラウト|ニジマス|ヤマメ|アマゴ|イワナ"),
-    ("ナマズ", r"ナマズ"),
-]
-FISH_RE = [(name, re.compile(pat)) for name, pat in FISH]
-FRESHWATER = {"アユ", "ブラックバス", "トラウト", "ナマズ"}
-BOAT_RE = re.compile(r"船|遊漁|乗合|沖|ジギング|タイラバ|鯛ラバ|ティップラン|オフショア|テンヤ|スルルー")
-FRESH_RE = re.compile(r"ダム|湖|管理釣り場|渓流")
 
 
 def log(*a):
@@ -103,54 +91,79 @@ def field(text, *names):
         m = re.search(r"【" + n + r"】\s*([^【]{1,40})", text)
         if m:
             return m.group(1).strip()
-        m = re.search(n + r"\s+(.{1,30}?)(?=\s+(?:釣果|タックル|釣行日|釣行場所|サイズ|釣り方|仕掛け)|$)", text)
+        m = re.search(n + r"\s+(?!(?:釣果|タックル|釣行日|釣行者|サイズ)\s)(.{1,30}?)(?=\s+(?:釣果|タックル|釣行日|釣行者|釣行場所|サイズ|釣り方|仕掛け)|$)", text)
         if m:
             return m.group(1).strip()
     return ""
 
 
-# 釣り場名 → おおよその位置（緯度, 経度）。店の釣果を地図に出すために使う。
-# 長い名前から先に照合する。あいまいな地名（室津・大津など）は入れない。
-PLACES_BY_PREF = {"広島": {
-    "倉橋": (34.115, 132.52), "音戸": (34.19, 132.54), "警固屋": (34.20, 132.54), "呉": (34.23, 132.56),
-    "江田島": (34.20, 132.45), "能美島": (34.18, 132.40), "沖美": (34.20, 132.34), "大柿": (34.18, 132.47),
-    "大黒神島": (34.17, 132.36), "似島": (34.32, 132.42), "宇品": (34.35, 132.46), "広島港": (34.35, 132.46),
-    "江波": (34.37, 132.43), "太田川": (34.48, 132.50), "八幡川": (34.36, 132.35), "五日市": (34.36, 132.36),
-    "廿日市": (34.34, 132.33), "宮島": (34.28, 132.31), "大竹": (34.23, 132.22), "小屋浦": (34.31, 132.52),
-    "坂ベイサイド": (34.32, 132.51), "下蒲刈": (34.20, 132.64), "上蒲刈": (34.19, 132.70), "蒲刈": (34.19, 132.68),
-    "安浦": (34.27, 132.70), "竹原": (34.34, 132.91), "忠海": (34.32, 132.97), "大久野島": (34.31, 132.99),
-    "大崎上島": (34.25, 132.90), "三原": (34.39, 133.08), "生口島": (34.29, 133.10), "因島": (34.31, 133.18),
-    "向島": (34.38, 133.21), "尾道": (34.41, 133.20), "鞆": (34.38, 133.38), "福山": (34.46, 133.40),
-    "走島": (34.34, 133.46),
-}, "山口": {
-    "周防大島": (33.93, 132.25), "屋代島": (33.93, 132.25), "岩国": (34.17, 132.22), "錦川": (34.17, 132.18),
-    "由宇": (34.04, 132.20), "柳井": (33.96, 132.10), "上関": (33.82, 132.11), "光市": (33.96, 131.94),
-    "下松": (34.00, 131.87), "笠戸島": (33.97, 131.83), "徳山": (34.04, 131.80), "周南": (34.04, 131.80),
-    "粭島": (34.00, 131.73), "防府": (34.03, 131.56), "佐波川": (34.05, 131.55), "野島": (33.93, 131.61),
-    "秋穂": (34.00, 131.42), "宇部": (33.94, 131.25), "小野田": (33.98, 131.18), "長府": (34.02, 131.00),
-    "関門": (33.96, 130.95), "彦島": (33.94, 130.90), "荒田": (33.94, 130.89), "福浦": (33.95, 130.90),
-    "六連島": (33.98, 130.86), "吉見": (34.03, 130.89), "蓋井島": (34.10, 130.80), "下関": (33.96, 130.94),
-    "角島": (34.35, 130.85), "特牛": (34.31, 130.89), "豊北": (34.30, 130.90), "油谷": (34.37, 131.03),
-    "仙崎": (34.39, 131.20), "青海島": (34.41, 131.20), "長門": (34.37, 131.18), "萩": (34.41, 131.40),
-    "阿武川": (34.40, 131.42), "須佐": (34.62, 131.60), "見島": (34.77, 131.14),
-}, "島根": {  # 広島・山口から通う人が多い
-    "浜田": (34.90, 132.07), "大田": (35.19, 132.50), "江津": (35.01, 132.22), "益田": (34.68, 131.84),
-}}
-PLACES = {k: v for d in PLACES_BY_PREF.values() for k, v in d.items()}
-PLACE_KEYS = sorted(PLACES, key=len, reverse=True)
+def strip_shops(s):
+    """店名（「〇〇店」）や海の名前は釣った場所の地名ではないので、照合から外す。"""
+    s = re.sub(r"瀬戸内海|日本海|太平洋", " ", s)  # 「瀬戸内海」の「内海」などに反応しないように
+    return re.sub(r"[^\s、。!！?？()（）【】「」・|｜]{1,10}店", " ", s)
 
 
-def locate(*texts):
+def shop_pos(shop, shop_area):
+    """店のおおよその位置（店名の地名 → 店名の県名 → 店のある地域の中心）。"""
+    for k in sorted(PLACES, key=len, reverse=True):
+        if k in shop:
+            return PLACES[k][2:]
+    m = PREF_RE.search(shop)
+    return CENTERS.get(m.group(1) if m else shop_area)
+
+
+def where(spot, title, body, shop="", shop_area=""):
+    """釣った場所 → (県, エリア, 地名, 位置)。分からなければ県は空。
+    同じ地名が複数ある場合（長浜・内海など）は、投稿した店にいちばん近い候補にする。"""
+    texts = [strip_shops(t) for t in (spot, title, body)]
     for t in texts:
         for k in PLACE_KEYS:
-            if k in t:
-                return k, PLACES[k]
-    return "", None
+            if k not in t:
+                continue
+            if k in PLACES:
+                pref, area, lat, lng = PLACES[k]
+                return pref, area, k, [lat, lng]
+            sp = shop_pos(shop, shop_area)
+            if not sp:
+                continue  # 店の位置も分からなければ決めない
+            pref, area, lat, lng = min(AMBIG[k], key=lambda c: (c[2] - sp[0]) ** 2 + (c[3] - sp[1]) ** 2)
+            return pref, area, k, [lat, lng]
+    for t in texts[:2]:  # 県名だけ書いてある場合（本文の県名は店の紹介のことが多いので見ない）
+        m = PREF_RE.search(t)
+        if m:
+            return m.group(1), "", "", None
+    return "", "", "", None
+
+
+def shop_where(shop, shop_area):
+    """釣り場が分からないときは、店の地域で分ける（店名の地名 → 店名の県名 → 店のある県）。"""
+    for k in sorted(PLACES, key=len, reverse=True):
+        if k in shop:
+            pref, area, _lat, _lng = PLACES[k]
+            return pref, area
+    m = PREF_RE.search(shop)
+    if m:
+        return m.group(1), ""
+    return (shop_area, "") if shop_area in PREFS else ("", "")
+
+
+def fish_of(text):
+    out = []
+    for name, _group, rx, excl in FISH:
+        t = text
+        for e in excl:
+            t = t.replace(e, "")
+        if rx.search(t):
+            out.append(name)
+    return out
+
+
+FRESH_NAMES = {name for name, group, _rx, _e in FISH if group == FRESH_GROUP}
 
 
 def classify(text):
-    fish = [name for name, rx in FISH_RE if rx.search(text)]
-    if fish and all(f in FRESHWATER for f in fish) or FRESH_RE.search(text):
+    fish = fish_of(text)
+    if fish and all(f in FRESH_NAMES for f in fish) or FRESH_RE.search(text):
         kind = "淡水"
     elif BOAT_RE.search(text):
         kind = "船"
@@ -159,24 +172,31 @@ def classify(text):
     return fish, kind
 
 
-def make(src, pref, shop, title, url, date, body, spot=""):
-    text = title + " " + body
-    fish, kind = classify(text)
-    spot = spot if spot and not re.fullmatch(r"都道府県地名|釣り場|船釣り|-", spot) else ""
-    place, pos = locate(spot, title, body)
+def make(src, shop, shop_area, title, url, date, body, spot=""):
+    title, body = plain(title), plain(body)
+    spot = spot if spot and not re.fullmatch(r"都道府県地名|釣り場|釣場|船釣り|-|ー|不明", spot) else ""
+    fish, kind = classify(title + " " + body)
+    pref, area, place, pos = where(spot, title, body, shop, shop_area)
+    by_shop = False
+    if not pref:
+        pref, area = shop_where(shop, shop_area)
+        by_shop = True
     return {
+        "byShop": by_shop,         # True なら釣り場が分からず、店の地域で分けたもの
         "url": url,
         "src": src,
-        "pref": pref,
         "shop": shop,
-        "title": cut(plain(title), 60),
+        "shopArea": shop_area,     # 店のある地域（参考）
+        "pref": pref,              # 釣った場所の県（不明なら店の県。それも分からなければ空）
+        "area": area,
+        "place": place,
+        "pos": pos,
+        "title": cut(title, 60),
         "date": date.astimezone(JST).isoformat(timespec="minutes"),
         "spot": cut(spot, 30),
         "fish": fish,
         "kind": kind,
         "text": cut(body),
-        "place": place,
-        "pos": list(pos) if pos else None,
     }
 
 
@@ -188,57 +208,51 @@ def rss_items(xml_text):
             "link": it.findtext("link") or "",
             "date": parsedate_to_datetime(it.findtext("pubDate")),
             "creator": it.findtext("dc:creator", namespaces=NS) or "",
+            "cats": [c.text or "" for c in it.findall("category")],
             "desc": plain(it.findtext("description")),
             "content": plain(it.findtext("content:encoded", namespaces=NS)),
         }
 
 
-# ---- かめや釣具（山陽エリアの釣果フィード） ----
-def kameya():
-    shop_pref = {s: p for p, shops in KAMEYA_SHOPS.items() for s in shops}
-    try:
-        cats = json.loads(get("https://kameya-choka.com/sanyo/wp-json/wp/v2/categories?per_page=100"))
-        by_id = {c["id"]: c["name"] for c in cats}
-        for c in cats:
-            area = by_id.get(c["parent"], "")
-            if area.endswith("エリア"):
-                shop_pref[c["name"]] = area[:-3]
-    except Exception as e:
-        log("kameya categories:", e)
+def feed_pages(url, pages):
     out = []
-    for page in (1, 2, 3):
-        url = "https://kameya-choka.com/sanyo/archives/f-info/feed"
-        if page > 1:
-            url += f"?paged={page}"
-        for it in rss_items(get(url)):
-            pref = shop_pref.get(it["creator"])
-            if pref not in ("広島", "山口"):
-                continue
+    for page in range(1, pages + 1):
+        u = url if page == 1 else url + ("&" if "?" in url else "?") + f"paged={page}"
+        try:
+            items = list(rss_items(get(u)))
+        except Exception as e:
+            log("feed", u, e)
+            break
+        out += items
+        if len(items) < 10:
+            break
+    return out
+
+
+# ---- かめや釣具（山陽・山陰の釣果フィード） ----
+def kameya():
+    shop_area = {s: p for p, shops in KAMEYA_SHOPS.items() for s in shops}
+    shop_area["itukaichi"] = "広島"  # 五日市店のアカウント名がローマ字のことがある
+    out = []
+    for region in ("sanyo", "sanin"):
+        for it in feed_pages(f"https://kameya-choka.com/{region}/archives/f-info/feed", 3):
             body = it["content"] or it["desc"]
             body = re.sub(r"お持ち込み＆キッズ釣果自慢.*", "", body)
-            out.append(make("かめや", pref, it["creator"], it["title"], it["link"], it["date"],
-                            body, field(body, "釣行場所")))
+            shop = "五日市店" if it["creator"] == "itukaichi" else it["creator"]
+            out.append(make("かめや", shop, shop_area.get(it["creator"], "山陰" if region == "sanin" else "山陽"),
+                            it["title"], it["link"], it["date"], body, field(body, "釣行場所")))
     return out
 
 
 # ---- アングル（エリア別の釣果フィード） ----
 def angle():
     out = []
-    for slug, pref in (("hiroshimaarea", "広島"), ("yamaguchiarea", "山口")):
-        for page in (1, 2):
-            url = f"https://www.e-angle.co.jp/chokaarea/{slug}/feed/"
-            if page > 1:
-                url += f"?paged={page}"
-            try:
-                items = list(rss_items(get(url)))
-            except Exception as e:
-                log("angle", slug, page, e)
-                break
-            for it in items:
-                body = re.sub(r"The post .*? first appeared on .*$", "", it["content"] or it["desc"]).strip()
-                m = re.search(r"([^\s0-9０-９/／、。！!]{1,8}店)", it["title"] + " " + body)
-                shop = m.group(1).replace("ＡＧ", "").replace("AG", "") if m else "アングル"
-                out.append(make("アングル", pref, shop, it["title"], it["link"], it["date"], body))
+    for slug, area in (("hiroshimaarea", "広島"), ("yamaguchiarea", "山口"), ("shimanearea", "島根"), ("totoriarea", "鳥取")):
+        for it in feed_pages(f"https://www.e-angle.co.jp/chokaarea/{slug}/feed/", 2):
+            body = re.sub(r"The post .*? first appeared on .*$", "", it["content"] or it["desc"]).strip()
+            m = re.search(r"([^\s0-9０-９/／、。！!]{1,8}店)", it["title"] + " " + body)
+            shop = m.group(1).replace("ＡＧ", "").replace("AG", "") if m else "アングル"
+            out.append(make("アングル", shop, area, it["title"], it["link"], it["date"], body))
     return out
 
 
@@ -247,11 +261,12 @@ CARD_RE = re.compile(
     r'href="/fishing_infos/(\d+)".*?card__title">\s*(.*?)\s*</p>.*?'
     r'card__tag--fishing">\s*(.*?)\s*</div>.*?card__date">\s*(.*?)\s*</div>.*?'
     r'card__text">(.*?)</div>', re.S)
+POINT_AREAS = (("74", "山陰"), ("93", "岡山"), ("92", "広島"), ("91", "山口"), ("95", "四国"))
 
 
 def point():
     out = []
-    for area_id, pref in (("92", "広島"), ("91", "山口")):
+    for area_id, area in POINT_AREAS:
         for page in (1, 2):
             url = f"https://www.point-i.jp/fishing_infos?area_id={area_id}&shop_id=0"
             if page > 1:
@@ -259,52 +274,79 @@ def point():
             try:
                 page_html = get(url)
             except Exception as e:
-                log("point", pref, page, e)
+                log("point", area, page, e)
                 break
             for pid, title, tag, date, body in CARD_RE.findall(page_html):
                 shop = plain(tag).split(" ")[0]
                 body = plain(body)
                 d = datetime.strptime(date.strip(), "%Y/%m/%d").replace(hour=12, tzinfo=JST)
-                spot = field(body, "釣場")
-                size = field(body, "サイズ")
-                fishes = field(body, "釣魚")
-                short = " ".join(x for x in (fishes, size) if x) or body
-                item = make("ポイント", pref, "ポイント" + shop, title, f"https://www.point-i.jp/fishing_infos/{pid}", d,
-                            body, spot)
-                item["text"] = cut(short if fishes else body)
+                fishes, size = field(body, "釣魚"), field(body, "サイズ")
+                item = make("ポイント", "ポイント" + shop, area, title, f"https://www.point-i.jp/fishing_infos/{pid}", d,
+                            body, field(body, "釣場"))
+                if fishes:
+                    item["text"] = cut(" ".join(x for x in (fishes, size) if x))
                 item["dateOnly"] = True
                 out.append(item)
     return out
 
 
+# ---- 釣り具のタイム（岡山・広島。お持ち込み釣果のフィード） ----
+def ftime():
+    out = []
+    for it in feed_pages("https://f-time.jp/category/motikomi/feed/", 2):
+        if re.search(r"\d+日号|まとめ", it["title"]):  # 週刊のまとめ記事は場所が混ざるので外す
+            continue
+        body = re.sub(r"^釣具のタイムにお持ち込みいただいたお客様情報です。ありがとうございます。", "", it["desc"]).strip()
+        parts = it["title"].split("|")  # 「広島県の釣果情報|内海周辺|エギング|アオリイカ【2026年9月】」
+        spot = field(body, "釣場") or (parts[1] if len(parts) > 2 else "")
+        out.append(make("タイム", "タイム", "岡山・広島", it["title"], it["link"], it["date"], body, spot))
+    return out
+
+
+# ---- パゴス（広島。スタッフ釣行記のフィード） ----
+def pagos():
+    out = []
+    for it in feed_pages("https://pagos.jp/category/fishingdiary/feed/", 1):
+        body = it["desc"] + " " + " ".join(c for c in it["cats"] if c not in ("スタッフ釣行記",))
+        m = re.search(r"([^\s(（]{1,6}店)", it["title"])
+        out.append(make("パゴス", "パゴス" + (m.group(1) if m else ""), "広島", it["title"], it["link"], it["date"], body))
+    return out
+
+
+SOURCES = (("かめや", kameya), ("アングル", angle), ("ポイント", point), ("タイム", ftime), ("パゴス", pagos))
+SHOP_AREAS = set(PREFS) | {"山陰", "山陽", "四国", "岡山・広島"}
+
+
 def main():
     try:
         with open(OUT, encoding="utf-8") as f:
-            old = json.load(f).get("items", [])
+            old = json.load(f)
     except (OSError, ValueError):
-        old = []
-    by_url = {i["url"]: i for i in old}
+        old = {}
+    by_url = {i["url"]: i for i in old.get("items", []) if "shopArea" in i}  # 古い形式の行は作り直す
     status = {}
-    for name, fn in (("かめや", kameya), ("アングル", angle), ("ポイント", point)):
+    for name, fn in SOURCES:
         try:
             items = fn()
-            status[name] = len(items)
-            for i in items:
+            # 中四国で釣ったもの、または場所不明でも中四国の店のもの
+            keep = [i for i in items if i["pref"] in PREFS or (not i["pref"] and i["shopArea"] in SHOP_AREAS)]
+            status[name] = len(keep)
+            for i in keep:
                 by_url[i["url"]] = i
-            log(name, len(items))
+            log(name, len(items), "→", len(keep))
         except Exception as e:
             status[name] = f"失敗: {e.__class__.__name__}"
             log(name, "FAILED", repr(e))
     cutoff = (datetime.now(JST) - timedelta(days=KEEP_DAYS)).isoformat()
     items = sorted((i for i in by_url.values() if i["date"] >= cutoff), key=lambda i: i["date"], reverse=True)
-    new_urls = sorted(i["url"] for i in items)
-    old_urls = sorted(i["url"] for i in old)
-    if new_urls == old_urls and items == sorted(old, key=lambda i: i["date"], reverse=True):
+    if items == old.get("items"):
         log("変更なし")
         return
+    places = [[k, v[0], v[1], v[2], v[3]] for k, v in PLACES.items()]  # 画面の「近くの地名」用（重複地名は除く）
+    areas = {p: list(_P["places"][p].keys()) for p in PREFS}
+    data = {"updated": datetime.now(JST).isoformat(timespec="minutes"), "status": status,
+            "regions": REGIONS, "areas": areas, "places": places, "items": items}
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    places = [[k, pref, lat, lng] for pref, d in PLACES_BY_PREF.items() for k, (lat, lng) in d.items()]
-    data = {"updated": datetime.now(JST).isoformat(timespec="minutes"), "status": status, "places": places, "items": items}
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
     log("保存", len(items), "件")

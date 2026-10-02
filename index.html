@@ -7,14 +7,14 @@
 <meta name="theme-color" content="#0b5f86">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="釣果まとめ">
-<title>釣果まとめ 広島・山口</title>
+<title>釣果まとめ 中四国</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 :root{
   --bg:#f3f6f8; --card:#fff; --ink:#17232b; --sub:#5b6b76; --line:#dde4e9;
   --accent:#0b5f86; --accent-ink:#fff; --accent-soft:#e2f0f7;
   --warn:#b54708; --danger:#c92a2a; --ok:#2b8a3e;
-  --kameya:#d9480f; --angle:#1971c2; --point:#2b8a3e; --mine:#9c36b5;
+  --kameya:#d9480f; --angle:#1971c2; --point:#2b8a3e; --mine:#9c36b5; --time:#c2255c; --pagos:#5f3dc4;
   --shadow:0 1px 3px rgba(0,0,0,.08);
   color-scheme:light;
 }
@@ -22,14 +22,14 @@
   --bg:#0f1519; --card:#182228; --ink:#e6edf1; --sub:#98a8b3; --line:#2a3740;
   --accent:#4fb3e0; --accent-ink:#06202c; --accent-soft:#16323f;
   --warn:#f5a25d; --danger:#ff8787; --ok:#69db7c;
-  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6;
+  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6; --time:#f06595; --pagos:#9775fa;
   --shadow:none; color-scheme:dark;
 }}
 :root[data-theme="dark"]{
   --bg:#0f1519; --card:#182228; --ink:#e6edf1; --sub:#98a8b3; --line:#2a3740;
   --accent:#4fb3e0; --accent-ink:#06202c; --accent-soft:#16323f;
   --warn:#f5a25d; --danger:#ff8787; --ok:#69db7c;
-  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6;
+  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6; --time:#f06595; --pagos:#9775fa;
   --shadow:none; color-scheme:dark;
 }
 *{box-sizing:border-box}
@@ -61,7 +61,7 @@ main{max-width:760px;margin:0 auto;padding:0 0 calc(76px + env(safe-area-inset-b
 .chip .n{opacity:.7;margin-left:3px;font-size:12px}
 .row{display:flex;gap:8px;align-items:center}
 .row > *{min-width:0}
-.search{flex:1;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px 10px;min-height:40px}
+.search{flex:1;width:100%;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px 10px;min-height:40px}
 select.small{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px;min-height:40px}
 
 /* カード */
@@ -73,6 +73,7 @@ select.small{border:1px solid var(--line);background:var(--card);border-radius:1
 .card .text{font-size:14px;color:var(--sub);overflow-wrap:anywhere}
 .card img.thumb{width:84px;height:84px;object-fit:cover;border-radius:8px;flex:none;background:var(--line)}
 .badge{display:inline-block;font-size:12px;border-radius:6px;padding:1px 6px;color:#fff;font-weight:600}
+.b-タイム{background:var(--time)} .b-パゴス{background:var(--pagos)}
 .b-かめや{background:var(--kameya)} .b-アングル{background:var(--angle)} .b-ポイント{background:var(--point)} .b-みんな{background:var(--mine)}
 .tag{display:inline-block;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:0 6px;margin:4px 4px 0 0}
 .tag.fish{border-color:var(--accent);color:var(--accent)}
@@ -81,6 +82,34 @@ select.small{border:1px solid var(--line);background:var(--card);border-radius:1
 .more{display:block;width:100%;padding:12px;border:1px solid var(--line);background:var(--card);border-radius:12px}
 .note{font-size:13px;color:var(--sub)}
 .links{margin-top:18px;padding:12px;border:1px dashed var(--line);border-radius:12px;font-size:14px}
+
+.unknown{color:var(--sub)}
+.chips.wrap{flex-wrap:wrap;overflow:visible}
+.chip.find{border-color:var(--accent);color:var(--accent);font-weight:600}
+select.small.grow{flex:1;min-width:0}
+.linkgrid{display:grid;grid-template-columns:auto auto auto;gap:4px 14px;justify-content:start;margin:6px 0}
+
+/* 魚種 */
+.fgroup{margin:16px 0 4px}
+.fgroup h3,.box h3,#fishView > h3{font-size:15px;margin:0 0 8px;color:var(--sub)}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.fcell{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;border:1px solid var(--line);
+  background:var(--card);border-radius:10px;padding:8px 10px;min-height:56px}
+.fcell b{font-size:15px}
+.fcell span{font-size:13px;color:var(--accent);font-weight:700}
+.fcell small{font-size:11px;color:var(--sub);line-height:1.3}
+.fcell.zero{opacity:.55}
+.fcell.zero span{color:var(--sub);font-weight:400}
+.fishname{font-size:24px;margin:12px 0 2px}
+.bars{display:flex;align-items:flex-end;gap:3px;height:110px;padding-top:6px}
+.bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+.bar i{display:block;width:100%;background:var(--accent);border-radius:3px 3px 0 0;min-height:1px}
+.bar span{font-size:10px;color:var(--sub);margin-top:3px}
+.hbar{display:grid;grid-template-columns:minmax(7em,40%) 1fr 2.2em;gap:8px;align-items:center;font-size:14px;margin:5px 0}
+.hbar .k{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hbar .v{height:12px;background:var(--accent-soft);border-radius:6px;overflow:hidden}
+.hbar .v i{display:block;height:100%;background:var(--accent);border-radius:6px}
+.hbar .n{text-align:right;font-weight:700}
 
 /* 地図 */
 #mapView{padding:0}
@@ -141,17 +170,18 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
 </head>
 <body>
 <header>
-  <h1>🎣 釣果まとめ 広島・山口</h1>
+  <h1>🎣 釣果まとめ 中四国</h1>
   <div class="upd" id="upd"></div>
 </header>
 
 <main>
-  <!-- 共通の絞り込み（一覧・地図） -->
+  <!-- 共通の絞り込み（一覧・地図・魚種）。地域は釣った場所で絞る -->
   <section class="filters" id="filters">
-    <div class="seg" id="fPref">
-      <button data-v="all" aria-pressed="true">全部</button>
-      <button data-v="広島">広島</button>
-      <button data-v="山口">山口</button>
+    <div class="seg">
+      <select class="small grow" id="fRegion" aria-label="釣った地域"></select>
+      <select class="small grow hidden" id="fArea" aria-label="エリア"></select>
+    </div>
+    <div class="seg">
       <select class="small" id="fDays" aria-label="期間">
         <option value="3">3日</option><option value="7" selected>1週間</option>
         <option value="14">2週間</option><option value="45">全部</option>
@@ -165,17 +195,12 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
       </select>
     </div>
     <div class="chips" id="fFish"></div>
-    <div class="row" style="margin-top:6px"><input class="search" id="fQ" type="search" placeholder="釣り場・店・言葉で探す"></div>
+    <div class="row" id="fQRow" style="margin-top:6px"><input class="search" id="fQ" type="search" placeholder="釣り場・店・言葉で探す"></div>
   </section>
 
   <section class="view" id="listView">
     <div id="list"></div>
-    <div class="links">
-      <b>アングラーズの釣果</b>（規約で転載できないため、リンクのみ）<br>
-      <a href="https://anglers.jp/prefectures/34/catches" target="_blank" rel="noopener">広島県の釣果</a>
-      <a href="https://anglers.jp/prefectures/35/catches" target="_blank" rel="noopener">山口県の釣果</a>
-      <p class="note">店の釣果は各店の公開ページから見出しと短い抜粋だけを集めています。写真と全文は元の記事でご覧ください。</p>
-    </div>
+    <div class="links" id="links"></div>
   </section>
 
   <section class="view hidden" id="mapView">
@@ -183,12 +208,15 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
       <span><i class="dot" style="background:var(--kameya)"></i>かめや</span>
       <span><i class="dot" style="background:var(--angle)"></i>アングル</span>
       <span><i class="dot" style="background:var(--point)"></i>ポイント</span>
+      <span><i class="dot" style="background:var(--time)"></i>タイム</span>
+      <span><i class="dot" style="background:var(--pagos)"></i>パゴス</span>
       <span>📍 みんなの投稿</span>
       <span>（店の釣果は地名からのおおよその位置）</span>
     </div>
     <div id="map"></div>
   </section>
 
+  <section class="view hidden" id="fishView"></section>
   <section class="view hidden form" id="postView"></section>
   <section class="view hidden" id="myView"></section>
 </main>
@@ -196,6 +224,7 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
 <nav class="tabs" role="tablist">
   <button role="tab" data-tab="list" aria-selected="true"><span class="i">📋</span>一覧</button>
   <button role="tab" data-tab="map"><span class="i">🗺️</span>地図</button>
+  <button role="tab" data-tab="fish"><span class="i">🐟</span>魚種</button>
   <button role="tab" data-tab="post"><span class="i">➕</span>投稿</button>
   <button role="tab" data-tab="my"><span class="i">👤</span>マイ釣果</button>
 </nav>
@@ -204,7 +233,7 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=1"></script>
-<script src="app.js?v=1"></script>
+<script src="config.js?v=3"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

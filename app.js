@@ -1,6 +1,7 @@
-/* 釣果まとめ 広島・山口
+/* 釣果まとめ 中四国
  * 店の釣果（data/choka.json、GitHub Actions が2時間おきに更新）と、
- * みんなの投稿（Supabase）を、一覧と地図で見る。 */
+ * みんなの投稿（Supabase）を、一覧・地図・魚種で見る。
+ * 地域は「店の場所」ではなく「釣った場所」で絞り込む。 */
 "use strict";
 
 const CFG = window.CHOKA_CONFIG || {};
@@ -16,33 +17,51 @@ const store = {
   set(k, v) { try { localStorage.setItem("choka-" + k, JSON.stringify(v)); } catch (e) { /* 保存できなくても動く */ } },
 };
 
-// 魚種の名寄せ（fetch.py と同じ並び。古いiPhoneでも動くよう後読みは使わない）
-const FISH = [
-  ["アオリイカ", /アオリ|秋イカ|新子イカ/], ["イカ(その他)", /ケンサキ|ヒイカ|コウイカ|モンゴウ|スルメイカ|ヤリイカ|ジンドウ/],
-  ["タコ", /タコ|蛸|イイダコ/], ["アジ", /アジ|鯵/], ["サバ", /サバ|鯖/], ["イワシ", /イワシ|鰯/],
-  ["サヨリ", /サヨリ|さより/], ["キス", /キス|鱚/], ["カワハギ", /カワハギ|ハゲ釣/], ["ハゼ", /ハゼ/],
-  ["メバル", /メバル|メバリング/], ["カサゴ", /カサゴ|ガシラ/], ["ハタ類", /キジハタ|アコウ|オオモンハタ|アカハタ|ハタ/],
-  ["チヌ", /チヌ|クロダイ|キビレ|チニング/], ["グレ", /グレ|メジナ|クロ(?![ダソムマ])/], ["マダイ", /マダイ|真鯛|タイラバ|鯛ラバ/],
-  ["イシダイ", /イシダイ|サンバソウ|イシガキダイ/], ["タチウオ", /タチウオ|太刀魚|タチ魚/], ["サワラ", /サワラ|サゴシ|鰆/],
-  ["ブリ類", /ブリ(?!ーフ)|ハマチ|ヤズ|ツバス|メジロ|青物/], ["ヒラマサ", /ヒラマサ/], ["カンパチ", /カンパチ|ネリゴ/],
-  ["シーバス", /シーバス|スズキ|セイゴ|フッコ/], ["ヒラメ", /ヒラメ/], ["マゴチ", /コチ/], ["カレイ", /カレイ/],
-  ["アナゴ", /アナゴ|穴子/], ["イサキ", /イサキ/], ["アマダイ", /アマダイ/], ["アユ", /鮎|アユ/],
-  ["ブラックバス", /ブラックバス|バス(?!ケット|タオル|停)/], ["トラウト", /トラウト|ニジマス|ヤマメ|アマゴ|イワナ/], ["ナマズ", /ナマズ/],
-];
+const PREFS9 = ["鳥取", "島根", "岡山", "広島", "山口", "徳島", "香川", "愛媛", "高知"];
+const ANGLERS_ID = { 鳥取: 31, 島根: 32, 岡山: 33, 広島: 34, 山口: 35, 徳島: 36, 香川: 37, 愛媛: 38, 高知: 39 };
+const KANPARI_SLUG = { 鳥取: "tottori", 島根: "simane", 岡山: "okayama", 広島: "hiroshima", 山口: "yamaguchi", 徳島: "tokushima", 香川: "kagawa", 愛媛: "ehime", 高知: "kochi" };
+// 店のある地域（釣り場が分からない釣果の控え）→ 含まれる県
+const SHOP_AREA_PREFS = { 山陰: ["鳥取", "島根"], 山陽: ["岡山", "広島", "山口"], 四国: ["徳島", "香川", "愛媛", "高知"], "岡山・広島": ["岡山", "広島"] };
+
+// 魚種の辞書は data/fish.json（fetch.py と共通）
+let FISH = [], GROUPS = [];
+async function loadFish() {
+  try {
+    const d = await (await fetch("data/fish.json?v=2")).json();
+    GROUPS = d.groups;
+    FISH = d.fish.map(f => Object.assign({}, f, { rx: new RegExp(f.re) }));
+  } catch (e) { FISH = []; GROUPS = []; }
+}
 function fishOf(text) {
-  const t = String(text || "").replace(/シーバス/g, "シーバス\u0000").replace(/ヒハタ/g, "");
-  const out = FISH.filter(([n, rx]) => n === "ブラックバス" ? rx.test(t.replace(/シーバス\u0000/g, "")) : rx.test(t)).map(([n]) => n);
-  return out;
+  const t = String(text || "");
+  return FISH.filter(f => f.rx.test((f.excl || []).reduce((s, e) => s.split(e).join(""), t))).map(f => f.name);
+}
+// ひらがな→カタカナ、全角英数→半角、空白除去（「あじ」でも「アジ」が引けるように）
+function norm(s) {
+  return String(s || "").replace(/[ぁ-ゖ]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60))
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\s+/g, "").toLowerCase();
+}
+function searchFish(q) {
+  const n = norm(q);
+  if (!n) return FISH;
+  return FISH.filter(f => [f.name, ...(f.alias || [])].some(w => norm(w).includes(n) || (n.length >= 2 && n.includes(norm(w)))));
 }
 
 const S = {
-  shop: [], places: [], updated: "", status: {},
+  shop: [], places: [], areas: {}, regions: { 中国: PREFS9.slice(0, 5), 四国: PREFS9.slice(5) },
+  updated: "", status: {},
   posts: [], me: null, nickname: store.get("nickname", ""),
   photoUrl: {},          // 写真のパス → 表示用URL
-  filter: Object.assign({ pref: "all", days: 7, kind: "all", src: "all", fish: "", q: "" }, store.get("filter", {})),
+  filter: loadFilter(),
   shown: 60,
   tab: "list",
+  fishView: "",          // 魚種タブで開いている魚
 };
+function loadFilter() {
+  const f = Object.assign({ region: "all", area: "", days: 7, kind: "all", src: "all", fish: "", q: "" }, store.get("filter", {}));
+  if (f.pref) { if (f.pref !== "all") f.region = f.pref; delete f.pref; }  // 以前の保存形式
+  return f;
+}
 
 /* ---------- 日付 ---------- */
 const pad = n => String(n).padStart(2, "0");
@@ -62,6 +81,8 @@ async function loadShop() {
     const d = await r.json();
     S.shop = (d.items || []).map(i => Object.assign({ type: "shop" }, i));
     S.places = d.places || [];
+    S.areas = d.areas || {};
+    if (d.regions) S.regions = d.regions;
     S.updated = d.updated || "";
     S.status = d.status || {};
   } catch (e) {
@@ -81,14 +102,28 @@ async function loadPosts() {
   await signPhotos(S.posts.flatMap(p => p.row.photos || []));
 }
 
+// 位置からいちばん近い地名（15km以内）
+function nearestPlace(pos) {
+  if (!pos || !S.places.length) return null;
+  let best = null, bd = 1e9;
+  S.places.forEach(([name, pref, area, lat, lng]) => {
+    const d = Math.hypot((lat - pos[0]) * 111, (lng - pos[1]) * 92);
+    if (d < bd) { bd = d; best = { name, pref, area }; }
+  });
+  return bd <= 15 ? best : null;
+}
+
 function postItem(row) {
+  const pos = row.lat != null && row.lng != null ? [row.lat, row.lng] : null;
+  const near = nearestPlace(pos);
+  const pref = PREFS9.includes(row.pref) ? row.pref : (near ? near.pref : "");
   return {
     type: "post", id: row.id, row, src: "みんな",
-    date: row.caught_at, pref: row.pref || "", shop: row.nickname,
-    title: row.fish, spot: row.spot || "", fish: fishOf(row.fish).length ? fishOf(row.fish) : [row.fish],
+    date: row.caught_at, pref, area: near && near.pref === pref ? near.area : "", shop: row.nickname,
+    title: row.fish, spot: row.spot || "", place: near ? near.name : "",
+    fish: fishOf(row.fish).length ? fishOf(row.fish) : [row.fish],
     kind: row.kind || "岸", text: [row.size, row.count, row.memo].filter(Boolean).join(" ・ "),
-    pos: row.lat != null && row.lng != null ? [row.lat, row.lng] : null,
-    mine: S.me && row.user_id === S.me.id,
+    pos, mine: S.me && row.user_id === S.me.id,
   };
 }
 
@@ -112,39 +147,87 @@ async function signPhotos(paths) {
 }
 
 /* ---------- 絞り込み ---------- */
-function baseFiltered() {
+// 選んでいる地域に含まれる県
+function regionPrefs(region) {
+  if (region === "all") return PREFS9;
+  return S.regions[region] || [region];
+}
+function inRegion(i) {
+  const f = S.filter;
+  if (f.region === "all") return true;
+  const prefs = regionPrefs(f.region);
+  if (!i.pref) {  // 釣った場所も店の県も分からないもの（「山陰」の店など）は、店の地域で判断する
+    const sp = SHOP_AREA_PREFS[i.shopArea] || [i.shopArea];
+    return !f.area && sp.some(p => prefs.includes(p));
+  }
+  if (!prefs.includes(i.pref)) return false;
+  return !f.area || i.area === f.area;
+}
+function baseFiltered(opt = {}) {
   const f = S.filter;
   const since = Date.now() - f.days * 864e5;
-  const q = f.q.trim();
+  const q = norm(f.q);
   let items = [];
   if (f.src !== "post") items = items.concat(S.shop);
   if (f.src !== "shop") items = items.concat(S.posts);
   return items.filter(i =>
-    new Date(i.date).getTime() >= since &&
-    (f.pref === "all" || i.pref === f.pref) &&
+    new Date(i.date).getTime() >= since && inRegion(i) &&
     (f.kind === "all" || i.kind === f.kind) &&
-    (!q || [i.title, i.text, i.spot, i.shop, i.place, (i.fish || []).join(" ")].join(" ").includes(q)));
+    (opt.noQuery || !q || norm([i.title, i.text, i.spot, i.shop, i.place, i.area, i.pref, (i.fish || []).join(" ")].join(" ")).includes(q)));
 }
 function filtered() {
   const f = S.filter;
   return baseFiltered().filter(i => !f.fish || (i.fish || []).includes(f.fish))
     .sort((a, b) => b.date.localeCompare(a.date));
 }
+function fishCounts(items) {
+  const cnt = {};
+  items.forEach(i => (i.fish || []).forEach(n => { cnt[n] = (cnt[n] || 0) + 1; }));
+  return cnt;
+}
+
+function regionLabel() {
+  const f = S.filter;
+  if (f.region === "all") return "中四国";
+  return f.area ? `${f.region}・${f.area}` : (S.regions[f.region] ? f.region + "地方" : f.region + "県");
+}
 
 function renderFilters() {
   const f = S.filter;
-  $$("#fPref button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === f.pref)));
+  const reg = $("#fRegion");
+  if (!reg.options.length) {
+    reg.innerHTML = `<option value="all">中四国すべて</option>` +
+      Object.entries(S.regions).map(([r, ps]) => `<optgroup label="${esc(r)}地方"><option value="${esc(r)}">${esc(r)}すべて</option>` +
+        ps.map(p => `<option value="${esc(p)}">${esc(p)}県</option>`).join("") + `</optgroup>`).join("");
+  }
+  reg.value = f.region;
+  const areas = S.areas[f.region] || [];
+  $("#fArea").classList.toggle("hidden", !areas.length);
+  $("#fArea").innerHTML = `<option value="">${esc(f.region)}県のすべて</option>` + areas.map(a => `<option>${esc(a)}</option>`).join("");
+  $("#fArea").value = areas.includes(f.area) ? f.area : "";
   $("#fDays").value = String(f.days);
   $("#fKind").value = f.kind;
   $("#fSrc").value = f.src;
   if ($("#fQ").value !== f.q) $("#fQ").value = f.q;
   // 魚種は、いまの条件で多い順に並べる
-  const cnt = {};
-  baseFiltered().forEach(i => (i.fish || []).forEach(n => { cnt[n] = (cnt[n] || 0) + 1; }));
+  const cnt = fishCounts(baseFiltered());
   const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]);
   if (f.fish && !cnt[f.fish]) top.unshift([f.fish, 0]);
-  $("#fFish").innerHTML = `<button class="chip" data-v="" aria-pressed="${!f.fish}">すべての魚</button>` +
+  $("#fFish").innerHTML = `<button class="chip find" data-goto="fish">🔍 魚種で探す</button>` +
+    `<button class="chip" data-v="" aria-pressed="${!f.fish}">すべての魚</button>` +
     top.map(([n, c]) => `<button class="chip" data-v="${esc(n)}" aria-pressed="${f.fish === n}">${esc(n)}<span class="n">${c}</span></button>`).join("");
+  renderLinks();
+}
+
+// 転載できないサイト（アングラーズ・カンパリ）は、選んでいる県のページへのリンクだけ
+function renderLinks() {
+  const prefs = regionPrefs(S.filter.region);
+  $("#links").innerHTML = `<b>ほかの釣果サイト</b>（規約で転載できないため、リンクのみ）
+    <div class="linkgrid">${prefs.map(p => `<span>${esc(p)}</span>
+      <a href="https://anglers.jp/prefectures/${ANGLERS_ID[p]}/catches" target="_blank" rel="noopener">アングラーズ</a>
+      <a href="https://fishing.ne.jp/fishingpost/area/${KANPARI_SLUG[p]}" target="_blank" rel="noopener">カンパリ</a>`).join("")}</div>
+    <p class="note">店の釣果は各店の公開ページから見出しと短い抜粋だけを集めています。写真と全文は元の記事でご覧ください。
+    地域は釣った場所（釣り場名・本文の地名）で分けています。同じ地名が複数ある場合と、場所が書かれていない場合は、投稿した店の地域で分けています。</p>`;
 }
 
 function setFilter(patch) {
@@ -155,12 +238,22 @@ function setFilter(patch) {
 }
 
 /* ---------- 一覧 ---------- */
+function placeLine(i) {
+  if (i.byShop) {
+    return `<span class="unknown">📍場所の記載なし（店の地域：${esc(i.pref ? i.pref + (i.area ? "・" + i.area : "") : i.shopArea)}）</span>`;
+  }
+  if (i.pref) {
+    const name = i.spot || i.place || i.area;
+    return `📍${esc(name ? name + "（" + i.pref + "）" : i.pref + "県")}`;
+  }
+  return `<span class="unknown">📍場所不明${i.shopArea ? "（" + esc(i.shopArea) + "の店）" : ""}</span>${i.spot ? " " + esc(i.spot) : ""}`;
+}
 function cardHtml(i) {
   if (i.type === "shop") {
     return `<a class="card" href="${esc(i.url)}" target="_blank" rel="noopener"><div class="body">
       <div class="meta"><span class="badge b-${esc(i.src)}">${esc(i.src)}</span>${esc(i.shop)}・${esc(fmtDate(i.date, i.dateOnly))}</div>
       <div class="title">${esc(i.title)}</div>
-      ${i.spot || i.place ? `<div class="meta">📍${esc(i.spot || i.place)}</div>` : ""}
+      <div class="meta">${placeLine(i)}</div>
       <div class="text">${esc(i.text)}</div>
       <div>${(i.fish || []).map(n => `<span class="tag fish">${esc(n)}</span>`).join("")}<span class="tag">${kindLabel(i.kind)}</span></div>
     </div></a>`;
@@ -172,7 +265,7 @@ function cardHtml(i) {
       <div class="meta"><span class="badge b-みんな">投稿</span>${esc(r.nickname)}・${esc(fmtDate(r.caught_at))}
         ${r.is_public ? "" : `<span class="private">🔒非公開</span>`}</div>
       <div class="title">${esc(r.fish)}${r.size ? " " + esc(r.size) : ""}${r.count ? " × " + esc(r.count) : ""}</div>
-      ${r.spot || r.pref ? `<div class="meta">📍${esc([r.pref, r.spot].filter(Boolean).join(" "))}</div>` : ""}
+      ${r.spot || i.pref ? `<div class="meta">📍${esc([r.spot, i.pref ? "（" + i.pref + "）" : ""].filter(Boolean).join(""))}</div>` : ""}
       <div>${r.weather ? `<span class="tag">${esc(weatherIcon(r.weather))}${esc(r.weather)}${r.temp != null ? " " + esc(r.temp) + "℃" : ""}</span>` : ""}
         ${r.tide_name ? `<span class="tag">🌊${esc(r.tide_name)}</span>` : ""}<span class="tag">${kindLabel(r.kind)}</span></div>
     </div></a>`;
@@ -183,12 +276,85 @@ const weatherIcon = w => ({ 晴れ: "☀️", くもり: "☁️", 雨: "🌧️
 function renderList() {
   const items = filtered();
   const el = $("#list");
+  const head = `<p class="note">${esc(regionLabel())}${S.filter.fish ? "・" + esc(S.filter.fish) : ""}：${items.length}件</p>`;
   if (!items.length) {
-    el.innerHTML = `<div class="empty">条件に合う釣果がありません。<br>期間を広げるか、魚種を「すべて」にしてください。</div>`;
+    el.innerHTML = head + `<div class="empty">条件に合う釣果がありません。<br>期間を広げるか、魚種を「すべて」にしてください。` +
+      `</div>`;
     return;
   }
-  el.innerHTML = `<p class="note">${items.length}件</p>` + items.slice(0, S.shown).map(cardHtml).join("") +
+  el.innerHTML = head + items.slice(0, S.shown).map(cardHtml).join("") +
     (items.length > S.shown ? `<button class="more" id="more">もっと見る（残り${items.length - S.shown}件）</button>` : "");
+}
+
+/* ---------- 魚種 ---------- */
+function renderFish() {
+  if (S.tab !== "fish") return;
+  const el = $("#fishView");
+  if (S.fishView) return renderFishDetail(el, S.fishView);
+  const all = baseFiltered();
+  const cnt = fishCounts(all);
+  const q = $("#fsQ") ? $("#fsQ").value : "";
+  const hits = new Set(searchFish(q).map(f => f.name));
+  const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const groupHtml = GROUPS.map(g => {
+    const fs = FISH.filter(f => f.group === g && hits.has(f.name));
+    if (!fs.length) return "";
+    return `<div class="fgroup"><h3>${esc(g)}</h3><div class="fgrid">${fs.map(f => `
+      <button class="fcell ${cnt[f.name] ? "" : "zero"}" data-fish="${esc(f.name)}">
+        <b>${esc(f.name)}</b><span>${cnt[f.name] ? cnt[f.name] + "件" : "—"}</span>
+        ${(f.alias || []).length ? `<small>${esc(f.alias.slice(0, 4).join("・"))}</small>` : ""}</button>`).join("")}</div></div>`;
+  }).join("");
+  const keep = document.activeElement && document.activeElement.id === "fsQ";
+  el.innerHTML = `
+    <input class="search" id="fsQ" type="search" placeholder="魚の名前で探す（ひらがな・別名もOK 例：はまち、がしら）" value="${esc(q)}">
+    ${!q && top.length ? `<div class="fgroup"><h3>${esc(regionLabel())}でいま多い魚（${S.filter.days}日）</h3>
+      <div class="chips wrap">${top.map(([n, c]) => `<button class="chip" data-fish="${esc(n)}">${esc(n)}<span class="n">${c}</span></button>`).join("")}</div></div>` : ""}
+    ${groupHtml || `<div class="empty">「${esc(q)}」に当たる魚が見つかりません</div>`}
+    <p class="note">件数は上の地域・期間・釣り方の条件で数えています。</p>`;
+  const inp = $("#fsQ");
+  inp.oninput = () => { const pos = inp.selectionStart; renderFish(); const n = $("#fsQ"); n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) { /* 一部の入力欄は位置指定できない */ } };
+  if (keep) inp.focus();
+}
+
+function renderFishDetail(el, name) {
+  const f = FISH.find(x => x.name === name) || { name, alias: [] };
+  const items = baseFiltered().filter(i => (i.fish || []).includes(name)).sort((a, b) => b.date.localeCompare(a.date));
+  // 釣れている場所（エリア単位）
+  const byArea = {};
+  items.forEach(i => {
+    const onePref = PREFS9.includes(S.filter.region);  // 県を選んでいるときは県名を省く
+    const k = i.pref ? (i.area ? (onePref ? i.area : `${i.pref}・${i.area}`) : `${i.pref}（エリア不明）`) : "場所不明";
+    byArea[k] = (byArea[k] || 0) + 1;
+  });
+  const areas = Object.entries(byArea).sort((a, b) => b[1] - a[1]);
+  const maxA = areas.length ? areas[0][1] : 1;
+  // 釣り方
+  const kinds = { 岸: 0, 船: 0, 淡水: 0 };
+  items.forEach(i => { kinds[i.kind] = (kinds[i.kind] || 0) + 1; });
+  // 日ごと（最大14日）
+  const days = Math.min(S.filter.days, 14), today = new Date(); today.setHours(0, 0, 0, 0);
+  const daily = [];
+  for (let k = days - 1; k >= 0; k--) {
+    const d0 = new Date(today.getTime() - k * 864e5), d1 = new Date(d0.getTime() + 864e5);
+    daily.push({ d: d0, n: items.filter(i => { const t = new Date(i.date); return t >= d0 && t < d1; }).length });
+  }
+  const maxD = Math.max(1, ...daily.map(x => x.n));
+  el.innerHTML = `
+    <div class="row"><button class="btn" data-fishback>← 戻る</button><span style="flex:1"></span>
+      <button class="btn" data-fishlist="${esc(name)}">📋 一覧</button><button class="btn" data-fishmap="${esc(name)}">🗺️ 地図</button></div>
+    <h2 class="fishname">${esc(name)}</h2>
+    ${(f.alias || []).length ? `<p class="note">別名・含むもの：${esc(f.alias.join("、"))}</p>` : ""}
+    <p><b>${esc(regionLabel())}</b>・${S.filter.days}日間で <b style="font-size:20px">${items.length}</b> 件</p>
+    ${items.length ? `
+    <div class="box"><h3>日ごとの件数</h3>
+      <div class="bars">${daily.map(x => `<div class="bar" title="${x.d.getMonth() + 1}/${x.d.getDate()} ${x.n}件">
+        <i style="height:${Math.round(x.n / maxD * 100)}%"></i><span>${x.d.getDate()}</span></div>`).join("")}</div></div>
+    <div class="box"><h3>釣れている場所</h3>${areas.map(([k, n]) => `
+      <div class="hbar"><span class="k">${esc(k)}</span><span class="v"><i style="width:${Math.round(n / maxA * 100)}%"></i></span><span class="n">${n}</span></div>`).join("")}</div>
+    <div class="box"><h3>釣り方</h3><div class="row" style="gap:16px">${Object.entries(kinds).filter(x => x[1]).map(([k, n]) => `<span>${esc(kindLabel(k))} <b>${n}</b></span>`).join("")}</div></div>
+    <h3>最新の釣果</h3>${items.slice(0, 20).map(cardHtml).join("")}
+    ${items.length > 20 ? `<button class="more" data-fishlist="${esc(name)}">残り${items.length - 20}件を一覧で見る</button>` : ""}`
+    : `<div class="empty">この条件では釣果がありません。<br>期間を広げるか、地域を変えてみてください。</div>`}`;
 }
 
 /* ---------- 地図 ---------- */
@@ -201,20 +367,18 @@ function jitter(key) {
 const tiles = () => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 18, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 });
+const SRC_COLOR = { かめや: "--kameya", アングル: "--angle", ポイント: "--point", タイム: "--time", パゴス: "--pagos" };
+let lastFitKey = "";
 function renderMap() {
   if (S.tab !== "map") return;
   if (!map) {
-    const first = !store.get("mapCenter");
-    map = L.map("map", { zoomControl: true }).setView(store.get("mapCenter", [34.15, 132.0]), store.get("mapZoom", 8));
+    map = L.map("map", { zoomControl: true }).setView([34.3, 133.0], 7);
     tiles().addTo(map);
     layer = L.layerGroup().addTo(map);
-    map._fitted = !first;
-    map.on("moveend", () => { store.set("mapCenter", [map.getCenter().lat, map.getCenter().lng]); store.set("mapZoom", map.getZoom()); });
   }
   setTimeout(() => map.invalidateSize(), 0);
   layer.clearLayers();
   const pts = [];
-  const color = { かめや: "--kameya", アングル: "--angle", ポイント: "--point" };
   const css = getComputedStyle(document.documentElement);
   filtered().forEach(i => {
     if (!i.pos) return;
@@ -222,9 +386,9 @@ function renderMap() {
     if (i.type === "shop") {
       const j = jitter(i.url);
       L.circleMarker([i.pos[0] + j[0], i.pos[1] + j[1]], {
-        radius: 8, weight: 2, color: "#fff", fillColor: css.getPropertyValue(color[i.src]).trim(), fillOpacity: .9,
+        radius: 8, weight: 2, color: "#fff", fillColor: css.getPropertyValue(SRC_COLOR[i.src] || "--accent").trim(), fillOpacity: .9,
       }).bindPopup(`<b>${esc(i.title)}</b><br>${esc(i.src)} ${esc(i.shop)}・${esc(fmtDate(i.date, i.dateOnly))}<br>
-        ${(i.fish || []).map(esc).join("・")}<br>📍${esc(i.spot || i.place)}（おおよそ）<br>
+        ${(i.fish || []).map(esc).join("・")}<br>📍${esc(i.spot || i.place)}（${esc(i.pref)}・おおよその位置）<br>
         <a href="${esc(i.url)}" target="_blank" rel="noopener">元の記事を見る</a>`).addTo(layer);
     } else {
       const r = i.row, ph = (r.photos || [])[0];
@@ -235,9 +399,10 @@ function renderMap() {
           <a href="#" data-post="${esc(r.id)}">詳しく見る</a>`).addTo(layer);
     }
   });
-  // 初めて開いたときは、釣果のある範囲に合わせる
-  if (pts.length && !map._fitted) {
-    map._fitted = true;
+  // 地域を変えたら、その範囲に合わせる
+  const key = S.filter.region + "|" + S.filter.area;
+  if (pts.length && key !== lastFitKey) {
+    lastFitKey = key;
     setTimeout(() => map.fitBounds(pts, { padding: [24, 24], maxZoom: 11 }), 50);
   }
 }
@@ -255,7 +420,7 @@ function showPost(id) {
   const r = i.row;
   const rows = [
     ["釣った人", r.nickname], ["日時", new Date(r.caught_at).toLocaleString("ja-JP", { dateStyle: "medium", timeStyle: "short" })],
-    ["場所", [r.pref, r.spot].filter(Boolean).join(" ")], ["魚種", r.fish], ["サイズ", r.size], ["数", r.count],
+    ["場所", [i.pref, i.area, r.spot].filter(Boolean).join(" ")], ["魚種", r.fish], ["サイズ", r.size], ["数", r.count],
     ["釣り方", kindLabel(r.kind)], ["仕掛け・エサ", r.tackle],
     ["天気", [r.weather, r.temp != null ? r.temp + "℃" : "", r.wind].filter(Boolean).join("・")],
     ["潮", [r.tide_name, r.tide_info].filter(Boolean).join("・")], ["メモ", r.memo],
@@ -276,12 +441,16 @@ function showPost(id) {
 function setTab(tab) {
   S.tab = tab;
   $$("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
-  $("#filters").classList.toggle("hidden", !(tab === "list" || tab === "map"));
+  $("#filters").classList.toggle("hidden", !(tab === "list" || tab === "map" || tab === "fish"));
+  $("#fFish").classList.toggle("hidden", tab === "fish");
+  $("#fQRow").classList.toggle("hidden", tab === "fish");
   $("#listView").classList.toggle("hidden", tab !== "list");
   $("#mapView").classList.toggle("hidden", tab !== "map");
+  $("#fishView").classList.toggle("hidden", tab !== "fish");
   $("#postView").classList.toggle("hidden", tab !== "post");
   $("#myView").classList.toggle("hidden", tab !== "my");
   if (tab === "map") renderMap();
+  if (tab === "fish") renderFish();
   if (tab === "post") renderPostView();
   if (tab === "my") renderMy();
   window.scrollTo(0, 0);
@@ -290,6 +459,7 @@ function renderAll() {
   renderFilters();
   renderList();
   renderMap();
+  renderFish();
 }
 
 /* ---------- 潮と天気 ---------- */
@@ -448,7 +618,7 @@ function renderPostView() {
       <button class="btn" type="button" id="pfClearPos">ピンを外す</button></div>
     <div class="auto" id="pfPosNote"></div>
     <div class="grid2">
-      <div><label for="pfPref">県</label><select id="pfPref"><option>広島</option><option>山口</option><option>島根</option><option>その他</option></select></div>
+      <div><label for="pfPref">県</label><select id="pfPref">${PREFS9.map(p => `<option>${p}</option>`).join("")}<option>その他</option></select></div>
       <div><label for="pfSpot">釣り場名</label><input type="text" id="pfSpot" maxlength="60" placeholder="例：倉橋島 鹿老渡"></div>
     </div>
     <label for="pfFish">魚種</label>
@@ -530,13 +700,8 @@ function setPos(pos, how) {
 }
 // 近くの地名から県と釣り場名の候補を入れる
 function guessPlace() {
-  if (!P.pos || !S.places.length) return;
-  let best = null, bd = 1e9;
-  S.places.forEach(([name, pref, lat, lng]) => {
-    const d = Math.hypot((lat - P.pos[0]) * 111, (lng - P.pos[1]) * 92);
-    if (d < bd) { bd = d; best = { name, pref }; }
-  });
-  if (!best || bd > 15) return;
+  const best = nearestPlace(P.pos);
+  if (!best) return;
   if (!P.dirty.pref) $("#pfPref").value = best.pref;
   if (!P.dirty.spot && !$("#pfSpot").value) $("#pfSpot").placeholder = `例：${best.name}付近`;
 }
@@ -760,24 +925,29 @@ async function refreshPosts() {
 
 /* ---------- イベント ---------- */
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-post],[data-close],[data-edit],[data-del],[data-fly],[data-goto],#more,#fPref button,#fFish .chip,nav.tabs button");
+  const t = e.target.closest("[data-post],[data-close],[data-edit],[data-del],[data-fly],[data-goto],[data-fish],[data-fishback],[data-fishlist],[data-fishmap],#more,#fFish .chip,nav.tabs button");
   if (!t) { if (e.target.id === "sheet") closeSheet(); return; }
-  if (t.matches("nav.tabs button")) return setTab(t.dataset.tab);
-  if (t.matches("#fPref button")) return setFilter({ pref: t.dataset.v });
+  if (t.matches("nav.tabs button")) { if (t.dataset.tab === "fish") S.fishView = ""; return setTab(t.dataset.tab); }
+  if (t.dataset.goto) { if (t.dataset.goto === "fish") S.fishView = ""; return setTab(t.dataset.goto); }
   if (t.matches("#fFish .chip")) return setFilter({ fish: t.dataset.v });
+  if (t.dataset.fish) { S.fishView = t.dataset.fish; renderFish(); return window.scrollTo(0, 0); }
+  if (t.hasAttribute("data-fishback")) { S.fishView = ""; return renderFish(); }
+  if (t.dataset.fishlist) { setFilter({ fish: t.dataset.fishlist, q: "" }); return setTab("list"); }
+  if (t.dataset.fishmap) { setFilter({ fish: t.dataset.fishmap, q: "" }); return setTab("map"); }
   if (t.id === "more") { S.shown += 60; return renderList(); }
   e.preventDefault();
   if (t.dataset.post) return showPost(t.dataset.post);
   if (t.hasAttribute("data-close")) return closeSheet();
   if (t.dataset.edit) return editPost(t.dataset.edit);
   if (t.dataset.del) return deletePost(t.dataset.del);
-  if (t.dataset.goto) return setTab(t.dataset.goto);
   if (t.dataset.fly) {
     const i = S.posts.find(p => p.id === t.dataset.fly) || myPosts.find(p => p.id === t.dataset.fly);
     closeSheet(); setTab("map");
     if (i?.pos) map.setView(i.pos, 13);
   }
 });
+$("#fRegion").onchange = e => setFilter({ region: e.target.value, area: "" });
+$("#fArea").onchange = e => setFilter({ area: e.target.value });
 $("#fDays").onchange = e => setFilter({ days: Number(e.target.value) });
 $("#fKind").onchange = e => setFilter({ kind: e.target.value });
 $("#fSrc").onchange = e => setFilter({ src: e.target.value });
@@ -801,6 +971,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet()
       }
     });
   }
-  await Promise.all([loadShop(), loadPosts()]);
+  await Promise.all([loadFish(), loadShop()]);  // 投稿の魚種・地名の判定に使うので先に読む
+  await loadPosts();
   renderAll();
 })();
