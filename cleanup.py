@@ -8,7 +8,7 @@ Supabase の無料枠（写真 1GB・データベース 500MB）の 9割を超�
 
 必要な設定（GitHub の Settings → Secrets and variables → Actions）:
   SUPABASE_SERVICE_KEY … Supabase の secret key（sb_secret_…）。公開してはいけない鍵なので、ファイルには書かない。
-鍵が無ければ何もせずに終わる。
+鍵が無ければ失敗として終わる（設定忘れに気づけるように）。
 """
 import json
 import os
@@ -69,8 +69,8 @@ def mark_removed(removed):
 
 def main():
     if not KEY:
-        log("SUPABASE_SERVICE_KEY が無いので何もしません")
-        return
+        log("SUPABASE_SERVICE_KEY が設定されていません（GitHub の Settings → Secrets に入れてください）")
+        sys.exit(1)
     photo, db = usage()
     log(f"写真 {photo / MB:.1f}MB / {PHOTO_LIMIT / MB:.0f}MB、データベース {db / MB:.1f}MB / {DB_LIMIT / MB:.0f}MB")
 
