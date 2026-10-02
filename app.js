@@ -628,7 +628,7 @@ let lastFitKey = "";
 function renderMap() {
   if (S.tab !== "map") return;
   if (!map) {
-    map = L.map("map", { zoomControl: true }).setView([34.3, 133.0], 7);
+    map = L.map("map", { zoomControl: true, preferCanvas: true })  // 印が数千個でも軽く.setView([34.3, 133.0], 7);
     tiles().addTo(map);
     layer = L.layerGroup().addTo(map);
   }

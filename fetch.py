@@ -483,7 +483,10 @@ def main():
             by_url.setdefault(i["url"], i)
         log("合流", MERGE_FILE, len(extra), "件")
     status = {}
+    only = [x for x in (os.environ.get("ONLY") or "").split(",") if x]  # 例: ONLY=タイム,パゴス（一部の店だけ読み直す）
     for name, fn in SOURCES:
+        if only and name not in only:
+            continue
         try:
             items = fn()
             # 中四国で釣ったもの、または場所不明でも中四国の店のもの
