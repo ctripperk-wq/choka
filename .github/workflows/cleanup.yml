@@ -3,6 +3,9 @@ name: 投稿の容量を整理
 on:
   schedule:
     - cron: "0 19 * * *"   # 毎日 4:00（日本時間）
+  push:                     # 整理のしくみを直したときにも1回動かす（容量に余裕があれば何も消さない）
+    branches: [main]
+    paths: [cleanup.py, .github/workflows/cleanup.yml]
   workflow_dispatch:
     inputs:
       dry_run:
