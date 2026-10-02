@@ -223,10 +223,13 @@ function renderFilters() {
 // 転載できないサイト（アングラーズ・カンパリ）は、選んでいる県のページへのリンクだけ
 function renderLinks() {
   const prefs = regionPrefs(S.filter.region);
-  $("#links").innerHTML = `<b>ほかの釣果サイト</b>（規約で転載できないため、リンクのみ）
+  $("#links").innerHTML = `<b>ほかの釣果サイト</b>（規約で転載できないため、リンクのみ：アングラーズ・カンパリ・fimo）
     <div class="linkgrid">${prefs.map(p => `<span>${esc(p)}</span>
       <a href="https://anglers.jp/prefectures/${ANGLERS_ID[p]}/catches" target="_blank" rel="noopener">アングラーズ</a>
       <a href="https://fishing.ne.jp/fishingpost/area/${KANPARI_SLUG[p]}" target="_blank" rel="noopener">カンパリ</a>`).join("")}</div>
+    <p style="margin:4px 0">fimo（地域別のページなし・全国）：
+      <a href="https://www.fimosw.com/fralog/list" target="_blank" rel="noopener">フラログ</a>
+      <a href="https://www.fimosw.com/article/list" target="_blank" rel="noopener">新着記事</a></p>
     ${prefs.includes("愛媛") ? `<p style="margin:4px 0">つり天国（松山）はInstagramのみ：
       <a href="https://www.instagram.com/tsuritengoku_higashinagato/" target="_blank" rel="noopener">東長戸店</a>
       <a href="https://www.instagram.com/tsuritengoku_kamogawa/" target="_blank" rel="noopener">鴨川店</a></p>` : ""}
