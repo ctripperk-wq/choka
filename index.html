@@ -111,6 +111,28 @@ select.small.grow{flex:1;min-width:0}
 .hbar .v i{display:block;height:100%;background:var(--accent);border-radius:6px}
 .hbar .n{text-align:right;font-weight:700}
 
+/* 潮汐 */
+.daynav{align-items:center}
+.daynav input[type=date]{flex:1;min-width:0;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px;min-height:44px}
+.daynav .btn{min-width:44px;padding:8px 10px}
+.tidehead{display:flex;align-items:center;gap:10px;margin:14px 0 4px}
+.tidehead > div{flex:1;min-width:0}
+.tplace{font-size:20px;font-weight:700}
+.tdate{color:var(--sub);font-size:14px}
+.tnow{margin:4px 0}
+.tidechart{width:100%;height:auto;display:block;margin:6px 0 10px;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.tgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tgrid .box{margin:0;padding:10px 12px}
+.tn{display:inline-block;border-radius:8px;padding:1px 8px;font-size:13px;font-weight:700;color:#fff;background:var(--sub);white-space:nowrap}
+.tn.big{font-size:18px;padding:4px 12px}
+.tn-大潮{background:#e03131} .tn-中潮{background:#e8590c} .tn-小潮{background:#1c7ed6} .tn-長潮{background:#7048e8} .tn-若潮{background:#2f9e44}
+.wtitle{font-size:15px;color:var(--sub);margin:18px 0 8px}
+.week{display:flex;flex-direction:column;gap:6px}
+.wrow{display:grid;grid-template-columns:6.5em 3.6em 1fr;gap:8px;align-items:center;text-align:left;border:1px solid var(--line);
+  background:var(--card);border-radius:10px;padding:8px 10px;font-size:14px}
+.wrow.cur{border-color:var(--accent)}
+.wt{font-size:13px;line-height:1.5}
+
 /* 地図 */
 #mapView{padding:0}
 #map{height:calc(100dvh - 210px - env(safe-area-inset-bottom) - env(safe-area-inset-top));min-height:320px}
@@ -122,6 +144,7 @@ select.small.grow{flex:1;min-width:0}
 
 /* フォーム */
 .form label{display:block;font-size:14px;font-weight:600;margin:14px 0 4px}
+.form label > input{font-weight:400;margin-top:4px}
 .form input[type=text],.form input[type=number],.form input[type=email],.form input[type=password],
 .form input[type=datetime-local],.form select,.form textarea{
   width:100%;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:10px;min-height:44px}
@@ -217,6 +240,7 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
   </section>
 
   <section class="view hidden" id="fishView"></section>
+  <section class="view hidden" id="tideView"></section>
   <section class="view hidden form" id="postView"></section>
   <section class="view hidden" id="myView"></section>
 </main>
@@ -225,6 +249,7 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
   <button role="tab" data-tab="list" aria-selected="true"><span class="i">📋</span>一覧</button>
   <button role="tab" data-tab="map"><span class="i">🗺️</span>地図</button>
   <button role="tab" data-tab="fish"><span class="i">🐟</span>魚種</button>
+  <button role="tab" data-tab="tide"><span class="i">🌊</span>潮汐</button>
   <button role="tab" data-tab="post"><span class="i">➕</span>投稿</button>
   <button role="tab" data-tab="my"><span class="i">👤</span>マイ釣果</button>
 </nav>
@@ -233,7 +258,7 @@ nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="config.js?v=4"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

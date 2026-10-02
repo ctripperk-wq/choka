@@ -357,6 +357,215 @@ function renderFishDetail(el, name) {
     : `<div class="empty">この条件では釣果がありません。<br>期間を広げるか、地域を変えてみてください。</div>`}`;
 }
 
+/* ---------- 潮汐（タイドグラフ） ---------- */
+// 地点（県→エリア→釣り場）と日付を選ぶと、その日の潮位の曲線・満潮干潮・日の出入り・1週間分を出す。
+// 潮位は Open-Meteo の海洋モデル（1時間ごと）。満潮・干潮の時刻は前後の値から放物線で補う。
+const T = Object.assign({ pref: "広島", area: "呉・倉橋", place: "倉橋", date: "", here: null }, store.get("tide", {}));
+const tideCache = {};
+let tideSeq = 0;
+const WEEK = "日月火水木金土";
+const todayStr = () => localInput(new Date()).slice(0, 10);
+const hm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const dayLabel = ds => { const d = new Date(ds + "T12:00:00+09:00"); return `${d.getMonth() + 1}/${d.getDate()}（${WEEK[d.getDay()]}）`; };
+const placeList = (pref, area) => S.places.filter(p => p[1] === pref && p[2] === area);
+
+function tidePoint() {
+  if (T.here) return { name: "現在地", lat: T.here[0], lng: T.here[1] };
+  const p = S.places.find(x => x[0] === T.place && x[1] === T.pref) || placeList(T.pref, T.area)[0];
+  return p ? { name: p[0], lat: p[3], lng: p[4] } : null;
+}
+function saveTide() { store.set("tide", { pref: T.pref, area: T.area, place: T.place, here: T.here }); }
+
+async function tideSeries(lat, lng, from, to) {
+  const key = [lat.toFixed(3), lng.toFixed(3), from, to].join("|");
+  if (!tideCache[key]) {
+    tideCache[key] = (async () => {
+      const url = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat.toFixed(3)}&longitude=${lng.toFixed(3)}` +
+        `&hourly=sea_level_height_msl&timezone=Asia%2FTokyo&start_date=${from}&end_date=${to}`;
+      const d = await (await fetch(url)).json();
+      if (d.error) throw new Error(d.reason || "取得できません");
+      const h = d.hourly?.sea_level_height_msl || [];
+      if (!h.length || h.every(v => v == null)) return null;
+      return { t: d.hourly.time.map(x => new Date(x + ":00+09:00")), h };
+    })();
+    tideCache[key].catch(() => { delete tideCache[key]; });
+  }
+  return tideCache[key];
+}
+function extremaOf(s) {
+  const out = [], h = s.h;
+  for (let k = 1; k < h.length - 1; k++) {
+    if (h[k - 1] == null || h[k] == null || h[k + 1] == null) continue;
+    const hi = h[k] >= h[k - 1] && h[k] > h[k + 1], lo = h[k] <= h[k - 1] && h[k] < h[k + 1];
+    if (!hi && !lo) continue;
+    const den = h[k - 1] - 2 * h[k] + h[k + 1];
+    const off = den ? 0.5 * (h[k - 1] - h[k + 1]) / den : 0;
+    out.push({ hi, at: new Date(s.t[k].getTime() + off * 36e5), h: h[k] - 0.25 * (h[k - 1] - h[k + 1]) * off });
+  }
+  return out;
+}
+async function sunTimes(lat, lng, from, to) {
+  try {
+    const age = (Date.now() - new Date(from + "T00:00:00+09:00")) / 864e5;
+    const host = age > 80 ? "https://archive-api.open-meteo.com/v1/archive" : "https://api.open-meteo.com/v1/forecast";
+    const d = await (await fetch(`${host}?latitude=${lat.toFixed(3)}&longitude=${lng.toFixed(3)}&daily=sunrise,sunset` +
+      `&timezone=Asia%2FTokyo&start_date=${from}&end_date=${to}`)).json();
+    const out = {};
+    (d.daily?.time || []).forEach((t, k) => {
+      if (d.daily.sunrise[k]) out[t] = { rise: new Date(d.daily.sunrise[k] + ":00+09:00"), set: new Date(d.daily.sunset[k] + ":00+09:00") };
+    });
+    return out;
+  } catch (e) { return {}; }
+}
+
+// その日の潮位の曲線（SVG）
+function tideChart(s, ext, date, sun) {
+  const W = 360, H = 220, L0 = 34, R0 = 8, TOP = 26, BOT = 186;
+  const D0 = new Date(date + "T00:00:00+09:00").getTime(), D1 = D0 + 864e5;
+  const pts = s.t.map((t, k) => [t.getTime(), s.h[k]]).filter(([t, v]) => v != null && t >= D0 - 36e5 && t <= D1 + 36e5);
+  const inDay = pts.filter(([t]) => t >= D0 && t <= D1).map(p => p[1]);
+  if (pts.length < 2 || !inDay.length) return "";
+  const lo = Math.min(...inDay), hi = Math.max(...inDay), padV = (hi - lo) * 0.15 || 0.2;
+  const y0 = lo - padV, y1 = hi + padV;
+  const X = t => L0 + (t - D0) / 864e5 * (W - L0 - R0);
+  const Y = v => BOT - (v - y0) / (y1 - y0) * (BOT - TOP);
+  // なめらかな曲線（Catmull-Rom → ベジェ）
+  const P = pts.map(([t, v]) => [X(t), Y(v)]);
+  let d = `M${P[0][0].toFixed(1)},${P[0][1].toFixed(1)}`;
+  for (let k = 0; k < P.length - 1; k++) {
+    const p0 = P[k - 1] || P[k], p1 = P[k], p2 = P[k + 1], p3 = P[k + 2] || p2;
+    d += ` C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)},${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(1)} ` +
+      `${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)},${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+  }
+  const area = `${d} L${P[P.length - 1][0].toFixed(1)},${BOT} L${P[0][0].toFixed(1)},${BOT} Z`;
+  let g = `<defs><clipPath id="tclip"><rect x="${L0}" y="0" width="${W - L0 - R0}" height="${H}"/></clipPath></defs>`;
+  if (sun) {  // 夜を暗く
+    g += `<rect x="${L0}" y="${TOP - 14}" width="${Math.max(0, X(sun.rise) - L0)}" height="${BOT - TOP + 14}" style="fill:var(--sub);opacity:.13"/>`;
+    g += `<rect x="${X(sun.set)}" y="${TOP - 14}" width="${Math.max(0, W - R0 - X(sun.set))}" height="${BOT - TOP + 14}" style="fill:var(--sub);opacity:.13"/>`;
+  }
+  for (let h = 0; h <= 24; h += 3) {
+    const x = X(D0 + h * 36e5);
+    g += `<line x1="${x}" y1="${TOP - 14}" x2="${x}" y2="${BOT}" style="stroke:var(--line);stroke-width:1"/>` +
+      `<text x="${x}" y="${BOT + 16}" text-anchor="middle" style="fill:var(--sub);font-size:11px">${h}</text>`;
+  }
+  if (y0 < 0 && y1 > 0) {
+    g += `<line x1="${L0}" y1="${Y(0)}" x2="${W - R0}" y2="${Y(0)}" style="stroke:var(--sub);stroke-dasharray:3 3;stroke-width:1;opacity:.6"/>` +
+      `<text x="${L0 - 4}" y="${Y(0) + 4}" text-anchor="end" style="fill:var(--sub);font-size:10px">0</text>`;
+  }
+  g += `<text x="${L0 - 4}" y="${Y(hi) + 4}" text-anchor="end" style="fill:var(--sub);font-size:10px">${Math.round(hi * 100)}</text>`;
+  g += `<text x="${L0 - 4}" y="${Y(lo) + 4}" text-anchor="end" style="fill:var(--sub);font-size:10px">${Math.round(lo * 100)}</text>`;
+  g += `<g clip-path="url(#tclip)"><path d="${area}" style="fill:var(--accent);opacity:.18"/>` +
+    `<path d="${d}" style="fill:none;stroke:var(--accent);stroke-width:2.5"/></g>`;
+  ext.filter(e => e.at.getTime() >= D0 && e.at.getTime() < D1).forEach(e => {
+    const x = X(e.at.getTime()), y = Y(e.h), ty = e.hi ? y - 8 : y + 16;
+    g += `<circle cx="${x}" cy="${y}" r="4" style="fill:${e.hi ? "var(--accent)" : "var(--card)"};stroke:var(--accent);stroke-width:2"/>` +
+      `<text x="${x}" y="${ty}" text-anchor="middle" style="fill:var(--ink);font-size:11px;font-weight:700">${hm(e.at)}</text>`;
+  });
+  const now = Date.now();
+  if (now >= D0 && now < D1) {
+    const x = X(now);
+    g += `<line x1="${x}" y1="${TOP - 14}" x2="${x}" y2="${BOT}" style="stroke:var(--danger);stroke-width:1.5"/>` +
+      `<text x="${x + 3}" y="${TOP - 4}" style="fill:var(--danger);font-size:10px;font-weight:700">いま</text>`;
+  }
+  return `<svg class="tidechart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(dayLabel(date))}の潮位">${g}</svg>`;
+}
+
+function tideState(ext, at) {
+  const prev = ext.filter(e => e.at <= at).pop(), next = ext.find(e => e.at > at);
+  if (!prev || !next) return "";
+  const k = Math.round((at - prev.at) / (next.at - prev.at) * 10), up = !prev.hi;
+  return k <= 0 ? (up ? "干潮" : "満潮") + "の潮止まり" : k >= 10 ? (up ? "満潮" : "干潮") + "の潮止まり" : (up ? "上げ" : "下げ") + k + "分";
+}
+
+async function renderTide() {
+  if (S.tab !== "tide") return;
+  const el = $("#tideView");
+  if (!T.date) T.date = todayStr();
+  if (!S.areas[T.pref]) { T.pref = "広島"; T.area = "呉・倉橋"; T.place = "倉橋"; }
+  if (!(S.areas[T.pref] || []).includes(T.area)) T.area = (S.areas[T.pref] || [])[0];
+  const places = placeList(T.pref, T.area);
+  if (!T.here && !places.some(p => p[0] === T.place)) T.place = places[0] ? places[0][0] : "";
+  const pt = tidePoint();
+  el.innerHTML = `
+    <div class="seg">
+      <select class="small grow" id="tdPref" aria-label="県">${PREFS9.map(p => `<option ${p === T.pref ? "selected" : ""}>${p}</option>`).join("")}</select>
+      <select class="small grow" id="tdArea" aria-label="エリア">${(S.areas[T.pref] || []).map(a => `<option ${a === T.area ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
+    </div>
+    <div class="seg">
+      <select class="small grow" id="tdPlace" aria-label="地点">
+        ${T.here ? `<option value="" selected>📍 現在地</option>` : ""}
+        ${places.map(p => `<option ${!T.here && p[0] === T.place ? "selected" : ""}>${esc(p[0])}</option>`).join("")}</select>
+      <button class="btn" id="tdHere" type="button">📍現在地</button>
+    </div>
+    <div class="seg daynav">
+      <button class="btn" data-tday="-1" type="button" aria-label="前の日">◀</button>
+      <input type="date" id="tdDate" value="${T.date}">
+      <button class="btn" data-tday="1" type="button" aria-label="次の日">▶</button>
+      ${T.date !== todayStr() ? `<button class="btn" data-tday="0" type="button">今日</button>` : ""}
+    </div>
+    <div id="tideBody"><p class="note">潮位を読み込んでいます…</p></div>`;
+  $("#tdPref").onchange = e => { T.pref = e.target.value; T.area = (S.areas[T.pref] || [])[0]; T.place = ""; T.here = null; saveTide(); renderTide(); };
+  $("#tdArea").onchange = e => { T.area = e.target.value; T.place = ""; T.here = null; saveTide(); renderTide(); };
+  $("#tdPlace").onchange = e => { if (e.target.value) { T.place = e.target.value; T.here = null; saveTide(); renderTide(); } };
+  $("#tdDate").onchange = e => { if (e.target.value) { T.date = e.target.value; renderTide(); } };
+  $("#tdHere").onclick = () => {
+    if (!navigator.geolocation) return alert("この端末では現在地を使えません");
+    $("#tideBody").innerHTML = `<p class="note">現在地を調べています…</p>`;
+    navigator.geolocation.getCurrentPosition(p => {
+      T.here = [p.coords.latitude, p.coords.longitude];
+      const near = nearestPlace(T.here);  // 近くの地名があれば県・エリアも合わせる
+      if (near) { T.pref = near.pref; T.area = near.area; }
+      saveTide(); renderTide();
+    }, () => { $("#tideBody").innerHTML = `<div class="msg err">現在地を取れませんでした。地点を選んでください。</div>`; },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 });
+  };
+  if (!pt) { $("#tideBody").innerHTML = `<div class="empty">地点を選んでください</div>`; return; }
+
+  const seq = ++tideSeq;
+  const from = addDays(T.date, -1), to = addDays(T.date, 7);
+  let s, sun;
+  try {
+    [s, sun] = await Promise.all([tideSeries(pt.lat, pt.lng, from, to), sunTimes(pt.lat, pt.lng, T.date, addDays(T.date, 6))]);
+  } catch (e) {
+    if (seq === tideSeq) $("#tideBody").innerHTML = `<div class="msg err">潮位を取得できませんでした（${esc(e.message || e)}）。日付を今日に近づけるか、通信状況を確かめてください。</div>`;
+    return;
+  }
+  if (seq !== tideSeq) return;
+  if (!s) { $("#tideBody").innerHTML = `<div class="empty">「${esc(pt.name)}」は海の潮位データがありません（川・湖・内陸の地点）。<br>近くの海の地点を選んでください。</div>`; return; }
+  const ext = extremaOf(s);
+  const dayExt = ds => { const a = new Date(ds + "T00:00:00+09:00").getTime(); return ext.filter(e => e.at.getTime() >= a && e.at.getTime() < a + 864e5); };
+  const today = dayExt(T.date);
+  const range = today.length ? Math.max(...today.map(e => e.h)) - Math.min(...today.map(e => e.h)) : 0;
+  const sd = sun[T.date];
+  const isToday = T.date === todayStr();
+  const list = (arr, hi) => arr.filter(e => e.hi === hi).map(e => `<b>${hm(e.at)}</b> <span class="note">${e.h >= 0 ? "+" : ""}${Math.round(e.h * 100)}cm</span>`).join("<br>") || "—";
+  const week = [];
+  for (let k = 0; k < 7; k++) {
+    const ds = addDays(T.date, k), ex = dayExt(ds);
+    week.push(`<button class="wrow ${k === 0 ? "cur" : ""}" data-tdate="${ds}"><span class="wd">${dayLabel(ds)}</span>
+      <span class="tn tn-${tideName(ds)}">${tideName(ds)}</span>
+      <span class="wt">満 ${ex.filter(e => e.hi).map(e => hm(e.at)).join(" ") || "—"}<br>干 ${ex.filter(e => !e.hi).map(e => hm(e.at)).join(" ") || "—"}</span></button>`);
+  }
+  $("#tideBody").innerHTML = `
+    <div class="tidehead">
+      <div><div class="tplace">${esc(pt.name)}<span class="note">（${esc(T.here ? "現在地" : T.pref + "・" + T.area)}）</span></div>
+        <div class="tdate">${dayLabel(T.date)}　月齢 ${moonAge(new Date(T.date + "T12:00:00+09:00")).toFixed(1)}</div></div>
+      <span class="tn big tn-${tideName(T.date)}">${tideName(T.date)}</span>
+    </div>
+    ${isToday ? `<p class="tnow">いま：<b>${esc(tideState(ext, new Date()) || "—")}</b></p>` : ""}
+    ${tideChart(s, ext, T.date, sd)}
+    <div class="tgrid">
+      <div class="box"><h3>満潮</h3>${list(today, true)}</div>
+      <div class="box"><h3>干潮</h3>${list(today, false)}</div>
+      <div class="box"><h3>日の出・日の入り</h3>${sd ? `${hm(sd.rise)} / ${hm(sd.set)}` : "—"}</div>
+      <div class="box"><h3>干満差</h3>${range ? `約${range.toFixed(1)}m` : "—"}</div>
+    </div>
+    <h3 class="wtitle">1週間の潮</h3>
+    <div class="week">${week.join("")}</div>
+    <p class="note">潮位は Open-Meteo の海洋モデルの値（平均海面からの高さ・目安）です。瀬戸内海の入り組んだ場所では時刻や高さがずれることがあります。
+      正確な値は <a href="https://www.data.jma.go.jp/kaiyou/db/tide/suisan/index.php" target="_blank" rel="noopener">気象庁の潮位表</a> で確かめてください。</p>`;
+}
+
 /* ---------- 地図 ---------- */
 let map, layer;
 function jitter(key) {
@@ -447,10 +656,12 @@ function setTab(tab) {
   $("#listView").classList.toggle("hidden", tab !== "list");
   $("#mapView").classList.toggle("hidden", tab !== "map");
   $("#fishView").classList.toggle("hidden", tab !== "fish");
+  $("#tideView").classList.toggle("hidden", tab !== "tide");
   $("#postView").classList.toggle("hidden", tab !== "post");
   $("#myView").classList.toggle("hidden", tab !== "my");
   if (tab === "map") renderMap();
   if (tab === "fish") renderFish();
+  if (tab === "tide") renderTide();
   if (tab === "post") renderPostView();
   if (tab === "my") renderMy();
   window.scrollTo(0, 0);
@@ -595,17 +806,40 @@ const P = { editing: null, pos: null, photos: [], keep: [], drop: [], dirty: {},
 function needSetupHtml() {
   return `<div class="box"><b>投稿機能はまだ準備中です</b><p class="note">Supabase の設定（SETUP.md の手順）が済むと、ここから自分の釣果を投稿できます。</p></div>`;
 }
-function needLoginHtml() {
-  return `<div class="box"><b>投稿するにはログインしてください</b><p class="note">「マイ釣果」タブから登録・ログインできます。</p>
-    <button class="btn primary" data-goto="my">ログインへ</button></div>`;
+// ログイン・新規登録の欄（投稿タブとマイ釣果タブで共通。ログインできたら onAuthStateChange が画面を作り直す）
+function renderAuth(el, lead) {
+  el.innerHTML = `<div class="box form">
+    ${lead ? `<p style="margin:0 0 4px">${esc(lead)}</p>` : ""}
+    <b>ログイン / 新規登録</b>
+    <label>メールアドレス<input type="email" data-au="email" autocomplete="email"></label>
+    <label>パスワード（6文字以上）<input type="password" data-au="pass" autocomplete="current-password"></label>
+    <label>ユーザー名（新規登録のとき）<input type="text" data-au="name" maxlength="30" value="${esc(S.nickname)}"></label>
+    <div data-au="msg"></div>
+    <div class="btns"><button class="btn primary" data-au="in">ログイン</button><button class="btn" data-au="up">新規登録</button></div>
+  </div>`;
+  const q = k => el.querySelector(`[data-au="${k}"]`);
+  const m = (s, err) => { q("msg").innerHTML = `<div class="msg ${err ? "err" : ""}">${esc(s)}</div>`; };
+  q("in").onclick = async () => {
+    m("ログインしています…");
+    const { error } = await sb.auth.signInWithPassword({ email: q("email").value.trim(), password: q("pass").value });
+    if (error) m("ログインできませんでした：" + error.message, true);
+  };
+  q("up").onclick = async () => {
+    const name = q("name").value.trim();
+    if (!name) return m("ユーザー名を入れてください", true);
+    m("登録しています…");
+    const { data, error } = await sb.auth.signUp({ email: q("email").value.trim(), password: q("pass").value, options: { data: { nickname: name } } });
+    if (error) return m("登録できませんでした：" + error.message, true);
+    S.nickname = name; store.set("nickname", name);
+    if (!data.session) m("確認メールを送りました。メールのリンクを開いてからログインしてください。");
+  };
 }
 
 function renderPostView() {
   const el = $("#postView");
   if (!sb) { el.innerHTML = needSetupHtml(); return; }
-  if (!S.me) { el.innerHTML = needLoginHtml(); return; }
+  if (!S.me) { el.dataset.ready = ""; renderAuth(el, "釣果を投稿するには、ログインか新規登録をしてください。"); return; }
   if (el.dataset.ready === "1") { setTimeout(() => pickMap && pickMap.invalidateSize(), 0); return; }
-  el.dataset.ready = "1";
   el.innerHTML = `
     <h2 style="margin:4px 0 0;font-size:18px" id="pfTitle">釣果を投稿</h2>
     <label for="pfName">ユーザー名</label>
@@ -623,7 +857,7 @@ function renderPostView() {
     </div>
     <label for="pfFish">魚種</label>
     <input type="text" id="pfFish" maxlength="80" list="fishList" placeholder="例：アオリイカ、アジ">
-    <datalist id="fishList">${FISH.map(([n]) => `<option value="${esc(n)}">`).join("")}</datalist>
+    <datalist id="fishList">${FISH.map(f => `<option value="${esc(f.name)}">`).join("")}</datalist>
     <div class="grid3">
       <div><label for="pfSize">サイズ</label><input type="text" id="pfSize" maxlength="40" placeholder="35cm"></div>
       <div><label for="pfCount">数</label><input type="text" id="pfCount" maxlength="40" placeholder="3匹"></div>
@@ -684,6 +918,7 @@ function renderPostView() {
   ["pfSpot"].forEach(id => { $("#" + id).oninput = () => { P.dirty.spot = true; }; });
   $("#pfPref").onchange = () => { P.dirty.pref = true; };
   resetForm();
+  el.dataset.ready = "1";  // 最後まで作れたときだけ「作成済み」にする（途中で失敗したら次に開いたとき作り直す）
 }
 function note(sel, s) { const el = $(sel); if (el) el.textContent = s; }
 
@@ -853,30 +1088,7 @@ let myPosts = [];
 async function renderMy() {
   const el = $("#myView");
   if (!sb) { el.innerHTML = needSetupHtml(); return; }
-  if (!S.me) {
-    el.innerHTML = `<div class="box form">
-      <b>ログイン / 新規登録</b>
-      <label for="auEmail">メールアドレス</label><input type="email" id="auEmail" autocomplete="email">
-      <label for="auPass">パスワード（6文字以上）</label><input type="password" id="auPass" autocomplete="current-password">
-      <label for="auName">ユーザー名（新規登録のとき）</label><input type="text" id="auName" maxlength="30" value="${esc(S.nickname)}">
-      <div id="auMsg"></div>
-      <div class="btns"><button class="btn primary" id="auIn">ログイン</button><button class="btn" id="auUp">新規登録</button></div>
-    </div>`;
-    const m = (s, err) => { $("#auMsg").innerHTML = `<div class="msg ${err ? "err" : ""}">${esc(s)}</div>`; };
-    $("#auIn").onclick = async () => {
-      const { error } = await sb.auth.signInWithPassword({ email: $("#auEmail").value.trim(), password: $("#auPass").value });
-      if (error) m("ログインできませんでした：" + error.message, true);
-    };
-    $("#auUp").onclick = async () => {
-      const name = $("#auName").value.trim();
-      if (!name) return m("ユーザー名を入れてください", true);
-      const { data, error } = await sb.auth.signUp({ email: $("#auEmail").value.trim(), password: $("#auPass").value, options: { data: { nickname: name } } });
-      if (error) return m("登録できませんでした：" + error.message, true);
-      S.nickname = name; store.set("nickname", name);
-      if (!data.session) m("確認メールを送りました。メールのリンクを開いてからログインしてください。");
-    };
-    return;
-  }
+  if (!S.me) { renderAuth(el, ""); return; }
   el.innerHTML = `<div class="box"><div class="row"><div style="flex:1"><b>${esc(S.nickname || "(名前なし)")}</b><div class="note">${esc(S.me.email || "")}</div></div>
       <button class="btn" id="myOut">ログアウト</button></div></div>
     <div id="myList"><p class="note">読み込み中…</p></div>`;
@@ -925,8 +1137,10 @@ async function refreshPosts() {
 
 /* ---------- イベント ---------- */
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-post],[data-close],[data-edit],[data-del],[data-fly],[data-goto],[data-fish],[data-fishback],[data-fishlist],[data-fishmap],#more,#fFish .chip,nav.tabs button");
+  const t = e.target.closest("[data-tday],[data-tdate],[data-post],[data-close],[data-edit],[data-del],[data-fly],[data-goto],[data-fish],[data-fishback],[data-fishlist],[data-fishmap],#more,#fFish .chip,nav.tabs button");
   if (!t) { if (e.target.id === "sheet") closeSheet(); return; }
+  if (t.dataset.tday != null) { T.date = t.dataset.tday === "0" ? todayStr() : addDays(T.date, Number(t.dataset.tday)); return renderTide(); }
+  if (t.dataset.tdate) { T.date = t.dataset.tdate; renderTide(); return window.scrollTo(0, 0); }
   if (t.matches("nav.tabs button")) { if (t.dataset.tab === "fish") S.fishView = ""; return setTab(t.dataset.tab); }
   if (t.dataset.goto) { if (t.dataset.goto === "fish") S.fishView = ""; return setTab(t.dataset.goto); }
   if (t.matches("#fFish .chip")) return setFilter({ fish: t.dataset.v });
