@@ -292,13 +292,32 @@ function renderList() {
 }
 
 /* ---------- 魚種 ---------- */
+// 魚種一覧。検索欄は作り直さず（日本語入力の変換中に壊れるため）、下の結果だけ書き換える。
+let fishQ = "";
 function renderFish() {
   if (S.tab !== "fish") return;
   const el = $("#fishView");
-  if (S.fishView) return renderFishDetail(el, S.fishView);
-  const all = baseFiltered();
-  const cnt = fishCounts(all);
-  const q = $("#fsQ") ? $("#fsQ").value : "";
+  if (S.fishView) { el.dataset.mode = "detail"; return renderFishDetail(el, S.fishView); }
+  if (el.dataset.mode !== "list") {
+    el.dataset.mode = "list";
+    el.innerHTML = `<input class="search" id="fsQ" type="search" enterkeyhint="search" autocomplete="off"
+        placeholder="魚の名前で探す（ひらがな・別名もOK 例：はまち、がしら）">
+      <div id="fsResults"></div>`;
+    const inp = $("#fsQ");
+    inp.value = fishQ;
+    const update = () => { fishQ = inp.value; renderFishResults(); };
+    let composing = false;
+    inp.addEventListener("compositionstart", () => { composing = true; });
+    inp.addEventListener("compositionend", () => { composing = false; update(); });
+    inp.addEventListener("input", e => { if (!composing && !e.isComposing) update(); });
+  }
+  renderFishResults();
+}
+function renderFishResults() {
+  const box = $("#fsResults");
+  if (!box) return;
+  const q = fishQ;
+  const cnt = fishCounts(baseFiltered());
   const hits = new Set(searchFish(q).map(f => f.name));
   const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const groupHtml = GROUPS.map(g => {
@@ -309,16 +328,11 @@ function renderFish() {
         <b>${esc(f.name)}</b><span>${cnt[f.name] ? cnt[f.name] + "件" : "—"}</span>
         ${(f.alias || []).length ? `<small>${esc(f.alias.slice(0, 4).join("・"))}</small>` : ""}</button>`).join("")}</div></div>`;
   }).join("");
-  const keep = document.activeElement && document.activeElement.id === "fsQ";
-  el.innerHTML = `
-    <input class="search" id="fsQ" type="search" placeholder="魚の名前で探す（ひらがな・別名もOK 例：はまち、がしら）" value="${esc(q)}">
+  box.innerHTML = `
     ${!q && top.length ? `<div class="fgroup"><h3>${esc(regionLabel())}でいま多い魚（${S.filter.days}日）</h3>
       <div class="chips wrap">${top.map(([n, c]) => `<button class="chip" data-fish="${esc(n)}">${esc(n)}<span class="n">${c}</span></button>`).join("")}</div></div>` : ""}
     ${groupHtml || `<div class="empty">「${esc(q)}」に当たる魚が見つかりません</div>`}
     <p class="note">件数は上の地域・期間・釣り方の条件で数えています。</p>`;
-  const inp = $("#fsQ");
-  inp.oninput = () => { const pos = inp.selectionStart; renderFish(); const n = $("#fsQ"); n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) { /* 一部の入力欄は位置指定できない */ } };
-  if (keep) inp.focus();
 }
 
 function renderFishDetail(el, name) {
@@ -1172,7 +1186,11 @@ $("#fDays").onchange = e => setFilter({ days: Number(e.target.value) });
 $("#fKind").onchange = e => setFilter({ kind: e.target.value });
 $("#fSrc").onchange = e => setFilter({ src: e.target.value });
 let qTimer;
-$("#fQ").oninput = e => { clearTimeout(qTimer); qTimer = setTimeout(() => setFilter({ q: e.target.value }), 250); };
+let qComposing = false;
+const applyQ = () => { clearTimeout(qTimer); qTimer = setTimeout(() => setFilter({ q: $("#fQ").value }), 250); };
+$("#fQ").addEventListener("compositionstart", () => { qComposing = true; });
+$("#fQ").addEventListener("compositionend", () => { qComposing = false; applyQ(); });
+$("#fQ").addEventListener("input", e => { if (!qComposing && !e.isComposing) applyQ(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
 
 /* ---------- 起動 ---------- */
