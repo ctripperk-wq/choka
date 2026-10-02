@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0b5f86">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="釣果まとめ">
+<title>釣果まとめ 広島・山口</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{
+  --bg:#f3f6f8; --card:#fff; --ink:#17232b; --sub:#5b6b76; --line:#dde4e9;
+  --accent:#0b5f86; --accent-ink:#fff; --accent-soft:#e2f0f7;
+  --warn:#b54708; --danger:#c92a2a; --ok:#2b8a3e;
+  --kameya:#d9480f; --angle:#1971c2; --point:#2b8a3e; --mine:#9c36b5;
+  --shadow:0 1px 3px rgba(0,0,0,.08);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1519; --card:#182228; --ink:#e6edf1; --sub:#98a8b3; --line:#2a3740;
+  --accent:#4fb3e0; --accent-ink:#06202c; --accent-soft:#16323f;
+  --warn:#f5a25d; --danger:#ff8787; --ok:#69db7c;
+  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6;
+  --shadow:none; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0f1519; --card:#182228; --ink:#e6edf1; --sub:#98a8b3; --line:#2a3740;
+  --accent:#4fb3e0; --accent-ink:#06202c; --accent-soft:#16323f;
+  --warn:#f5a25d; --danger:#ff8787; --ok:#69db7c;
+  --kameya:#ff8a4c; --angle:#5aa9f0; --point:#5fd27a; --mine:#d38fe6;
+  --shadow:none; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP","Yu Gothic UI",Meiryo,sans-serif;
+  font-size:16px;line-height:1.5;-webkit-text-size-adjust:100%}
+a{color:var(--accent)}
+button,input,select,textarea{font:inherit;font-size:16px;color:inherit}
+button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.hidden{display:none!important}
+
+header{position:sticky;top:0;z-index:20;background:var(--accent);color:var(--accent-ink);
+  padding:calc(env(safe-area-inset-top) + 10px) 16px 10px;display:flex;align-items:center;gap:8px}
+header h1{font-size:18px;margin:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header .upd{font-size:12px;opacity:.85;text-align:right;line-height:1.3}
+
+main{max-width:760px;margin:0 auto;padding:0 0 calc(76px + env(safe-area-inset-bottom))}
+.view{padding:12px 16px}
+
+/* 絞り込み */
+.filters{background:var(--bg);
+  padding:10px 16px 6px;border-bottom:1px solid var(--line)}
+.seg{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.seg button,.chip{border:1px solid var(--line);background:var(--card);border-radius:999px;
+  padding:6px 12px;min-height:36px;font-size:14px;white-space:nowrap}
+.seg button[aria-pressed="true"],.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip .n{opacity:.7;margin-left:3px;font-size:12px}
+.row{display:flex;gap:8px;align-items:center}
+.row > *{min-width:0}
+.search{flex:1;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px 10px;min-height:40px}
+select.small{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px;min-height:40px}
+
+/* カード */
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+  padding:12px;margin-bottom:10px;display:flex;gap:12px;color:inherit;text-decoration:none}
+.card .body{flex:1;min-width:0}
+.card .meta{font-size:13px;color:var(--sub);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.card .title{font-weight:600;margin:2px 0;overflow-wrap:anywhere}
+.card .text{font-size:14px;color:var(--sub);overflow-wrap:anywhere}
+.card img.thumb{width:84px;height:84px;object-fit:cover;border-radius:8px;flex:none;background:var(--line)}
+.badge{display:inline-block;font-size:12px;border-radius:6px;padding:1px 6px;color:#fff;font-weight:600}
+.b-かめや{background:var(--kameya)} .b-アングル{background:var(--angle)} .b-ポイント{background:var(--point)} .b-みんな{background:var(--mine)}
+.tag{display:inline-block;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:0 6px;margin:4px 4px 0 0}
+.tag.fish{border-color:var(--accent);color:var(--accent)}
+.private{color:var(--warn);font-weight:600}
+.empty{text-align:center;color:var(--sub);padding:40px 0}
+.more{display:block;width:100%;padding:12px;border:1px solid var(--line);background:var(--card);border-radius:12px}
+.note{font-size:13px;color:var(--sub)}
+.links{margin-top:18px;padding:12px;border:1px dashed var(--line);border-radius:12px;font-size:14px}
+
+/* 地図 */
+#mapView{padding:0}
+#map{height:calc(100dvh - 210px - env(safe-area-inset-bottom) - env(safe-area-inset-top));min-height:320px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;padding:6px 16px;color:var(--sub)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:3px;vertical-align:-1px}
+.leaflet-popup-content{font-size:14px;line-height:1.45;margin:10px 12px}
+.leaflet-popup-content img{width:100%;max-height:160px;object-fit:cover;border-radius:6px;margin-bottom:4px}
+.pin{font-size:26px;line-height:26px;text-align:center;filter:drop-shadow(0 1px 1px rgba(0,0,0,.5))}
+
+/* フォーム */
+.form label{display:block;font-size:14px;font-weight:600;margin:14px 0 4px}
+.form input[type=text],.form input[type=number],.form input[type=email],.form input[type=password],
+.form input[type=datetime-local],.form select,.form textarea{
+  width:100%;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:10px;min-height:44px}
+.form textarea{min-height:80px;resize:vertical}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid3{display:grid;grid-template-columns:1.2fr .8fr 1fr;gap:8px}
+.grid2 label,.grid3 label{margin-top:8px}
+#pickMap{height:240px;border-radius:12px;border:1px solid var(--line)}
+.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:10px 14px;min-height:44px}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+.btn.danger{color:var(--danger)}
+.btn.wide{width:100%;margin-top:18px}
+.btn:disabled{opacity:.5}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.auto{font-size:12px;color:var(--sub);margin-top:4px;min-height:18px}
+.photos{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.photos .ph{position:relative}
+.photos img{width:84px;height:84px;object-fit:cover;border-radius:8px}
+.photos button{position:absolute;top:-6px;right:-6px;width:28px;height:28px;border-radius:50%;border:none;
+  background:var(--danger);color:#fff;font-weight:700;line-height:28px;padding:0}
+.toggle{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--card);margin-top:14px}
+.toggle input{width:22px;height:22px}
+.toggle .t{flex:1}
+.toggle small{display:block;color:var(--sub);font-weight:400}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.msg{padding:10px 12px;border-radius:10px;background:var(--accent-soft);margin:10px 0;font-size:14px}
+.msg.err{background:#fde8e8;color:#9b1c1c}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .msg.err{background:#3b1d1d;color:#ffb3b3}}
+
+/* 詳細 */
+.sheet{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center}
+.sheet .inner{background:var(--bg);width:100%;max-width:760px;max-height:92dvh;overflow:auto;border-radius:16px 16px 0 0;
+  padding:14px 16px calc(16px + env(safe-area-inset-bottom))}
+.sheet .gallery{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory;margin:8px 0}
+.sheet .gallery img{height:260px;max-width:90%;object-fit:cover;border-radius:10px;scroll-snap-align:start}
+.kv{display:grid;grid-template-columns:6.8em 1fr;gap:4px 10px;font-size:15px}
+.kv dt{color:var(--sub)} .kv dd{margin:0;overflow-wrap:anywhere}
+
+/* 下のタブ */
+nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:900;background:var(--card);border-top:1px solid var(--line);
+  display:flex;padding-bottom:env(safe-area-inset-bottom)}
+nav.tabs button{flex:1;border:none;background:none;padding:8px 0 6px;font-size:12px;color:var(--sub);min-height:56px}
+nav.tabs button .i{display:block;font-size:22px;line-height:24px}
+nav.tabs button[aria-selected="true"]{color:var(--accent);font-weight:700}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎣 釣果まとめ 広島・山口</h1>
+  <div class="upd" id="upd"></div>
+</header>
+
+<main>
+  <!-- 共通の絞り込み（一覧・地図） -->
+  <section class="filters" id="filters">
+    <div class="seg" id="fPref">
+      <button data-v="all" aria-pressed="true">全部</button>
+      <button data-v="広島">広島</button>
+      <button data-v="山口">山口</button>
+      <select class="small" id="fDays" aria-label="期間">
+        <option value="3">3日</option><option value="7" selected>1週間</option>
+        <option value="14">2週間</option><option value="45">全部</option>
+      </select>
+      <select class="small" id="fKind" aria-label="釣り方">
+        <option value="all">釣り方:全部</option><option value="岸">堤防・磯</option>
+        <option value="船">船</option><option value="淡水">淡水</option>
+      </select>
+      <select class="small" id="fSrc" aria-label="情報源">
+        <option value="all">店+投稿</option><option value="shop">店の釣果</option><option value="post">みんなの投稿</option>
+      </select>
+    </div>
+    <div class="chips" id="fFish"></div>
+    <div class="row" style="margin-top:6px"><input class="search" id="fQ" type="search" placeholder="釣り場・店・言葉で探す"></div>
+  </section>
+
+  <section class="view" id="listView">
+    <div id="list"></div>
+    <div class="links">
+      <b>アングラーズの釣果</b>（規約で転載できないため、リンクのみ）<br>
+      <a href="https://anglers.jp/prefectures/34/catches" target="_blank" rel="noopener">広島県の釣果</a>
+      <a href="https://anglers.jp/prefectures/35/catches" target="_blank" rel="noopener">山口県の釣果</a>
+      <p class="note">店の釣果は各店の公開ページから見出しと短い抜粋だけを集めています。写真と全文は元の記事でご覧ください。</p>
+    </div>
+  </section>
+
+  <section class="view hidden" id="mapView">
+    <div class="legend">
+      <span><i class="dot" style="background:var(--kameya)"></i>かめや</span>
+      <span><i class="dot" style="background:var(--angle)"></i>アングル</span>
+      <span><i class="dot" style="background:var(--point)"></i>ポイント</span>
+      <span>📍 みんなの投稿</span>
+      <span>（店の釣果は地名からのおおよその位置）</span>
+    </div>
+    <div id="map"></div>
+  </section>
+
+  <section class="view hidden form" id="postView"></section>
+  <section class="view hidden" id="myView"></section>
+</main>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="list" aria-selected="true"><span class="i">📋</span>一覧</button>
+  <button role="tab" data-tab="map"><span class="i">🗺️</span>地図</button>
+  <button role="tab" data-tab="post"><span class="i">➕</span>投稿</button>
+  <button role="tab" data-tab="my"><span class="i">👤</span>マイ釣果</button>
+</nav>
+
+<div class="sheet hidden" id="sheet" role="dialog" aria-modal="true"><div class="inner" id="sheetInner"></div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.min.js"></script>
+<script src="config.js?v=1"></script>
+<script src="app.js?v=1"></script>
+</body>
+</html>

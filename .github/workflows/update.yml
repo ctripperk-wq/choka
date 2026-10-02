@@ -1,0 +1,36 @@
+name: 釣果を更新
+
+on:
+  schedule:
+    - cron: "17 */2 * * *"   # 2時間おき（UTC。日本時間でも2時間おき）
+  workflow_dispatch:          # Actions 画面から手動でも動かせる
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-choka
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 釣果を集める
+        run: python fetch.py
+      - name: 変わっていたら保存
+        run: |
+          if git diff --quiet -- data/choka.json; then
+            echo "変更なし"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add data/choka.json
+          git commit -m "釣果を更新 $(TZ=Asia/Tokyo date '+%m/%d %H:%M')"
+          git push
