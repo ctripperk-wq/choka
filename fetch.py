@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -74,10 +75,19 @@ def log(*a):
     print(*a, file=sys.stderr, flush=True)
 
 
-def get(url):
+def get(url, tries=3):
+    """読み込みに失敗したら（一時的なエラーが時々ある）、少し待って最大3回まで読み直す。"""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept-Language": "ja"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        body = r.read()
+    for k in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                body = r.read()
+            break
+        except Exception as e:
+            if k == tries - 1 or (isinstance(e, urllib.error.HTTPError) and e.code in (403, 404)):
+                raise
+            log("  読み直し", url, e)
+            time.sleep(10 * (k + 1))
     time.sleep(2.0 if DEEP_CUTOFF else 1.5)
     return body.decode("utf-8", "replace")
 

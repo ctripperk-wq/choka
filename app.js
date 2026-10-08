@@ -61,6 +61,8 @@ function loadFilter() {
   const f = Object.assign({ region: "all", area: "", days: 7, kind: "all", src: "all", fish: "", q: "" }, store.get("filter", {}));
   if (f.pref) { if (f.pref !== "all") f.region = f.pref; delete f.pref; }  // 以前の保存形式
   if (![3, 7, 14, 30, 90, 365, 99999].includes(Number(f.days))) f.days = f.days > 14 ? 30 : 7;  // 以前の「全部」(45日)など
+  if (!["all", "shop", "post"].includes(f.src)) f.src = "all";
+  if (!["all", "岸", "船", "淡水"].includes(f.kind)) f.kind = "all";
   return f;
 }
 
@@ -294,13 +296,38 @@ function cardHtml(i) {
 const kindLabel = k => ({ 岸: "堤防・磯", 船: "船", 淡水: "淡水" }[k] || "");
 const weatherIcon = w => ({ 晴れ: "☀️", くもり: "☁️", 雨: "🌧️", 雪: "❄️", 霧: "🌫️", 雷雨: "⛈️" }[w] || "");
 
+// いま効いている絞り込み（初期状態と違うもの）
+const FILTER_DEFAULT = { region: "all", area: "", days: 7, kind: "all", src: "all", fish: "", q: "" };
+function activeFilters() {
+  const f = S.filter, out = [];
+  if (f.src === "post") out.push("みんなの投稿だけ");
+  if (f.src === "shop") out.push("店の釣果だけ");
+  if (f.region !== "all") out.push(f.area ? `${f.region}・${f.area}` : regionLabel());
+  if (f.kind !== "all") out.push(kindLabel(f.kind) + "だけ");
+  if (f.fish) out.push(f.fish);
+  if (f.q) out.push(`「${f.q}」で検索`);
+  if (f.days < 7) out.push(periodLabel());
+  return out;
+}
+function resetFilters() {
+  S.filter = Object.assign({}, FILTER_DEFAULT);
+  store.set("filter", S.filter);
+  $("#fQ").value = "";
+  S.shown = 60;
+  renderAll();
+}
 function renderList() {
   const items = filtered();
   const el = $("#list");
-  const head = `<p class="note">${esc(regionLabel())}${S.filter.fish ? "・" + esc(S.filter.fish) : ""}：${items.length}件</p>`;
+  const act = activeFilters();
+  const head = `<p class="note">${esc(regionLabel())}${S.filter.fish ? "・" + esc(S.filter.fish) : ""}・${esc(periodLabel())}：${items.length}件` +
+    (act.length ? `<br>絞り込み中：${esc(act.join("・"))} <button class="linkbtn" data-reset>元に戻す</button>` : "") + `</p>`;
   if (!items.length) {
-    el.innerHTML = head + `<div class="empty">条件に合う釣果がありません。<br>期間を広げるか、魚種を「すべて」にしてください。` +
-      `</div>`;
+    const hint = S.filter.src === "post" && !S.posts.length
+      ? "「みんなの投稿だけ」になっていますが、まだ投稿がありません。"
+      : "条件に合う釣果がありません。";
+    el.innerHTML = head + `<div class="empty">${esc(hint)}<br>
+      <button class="btn primary" data-reset style="margin-top:12px">条件をすべて元に戻す</button></div>`;
     return;
   }
   el.innerHTML = head + items.slice(0, S.shown).map(cardHtml).join("") +
@@ -1184,8 +1211,9 @@ async function refreshPosts() {
 
 /* ---------- イベント ---------- */
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-tday],[data-tdate],[data-post],[data-close],[data-edit],[data-del],[data-fly],[data-goto],[data-fish],[data-fishback],[data-fishlist],[data-fishmap],#more,#fFish .chip,nav.tabs button");
+  const t = e.target.closest("[data-reset],[data-tday],[data-tdate],[data-post],[data-close],[data-edit],[data-del],[data-fly],[data-goto],[data-fish],[data-fishback],[data-fishlist],[data-fishmap],#more,#fFish .chip,nav.tabs button");
   if (!t) { if (e.target.id === "sheet") closeSheet(); return; }
+  if (t.hasAttribute("data-reset")) return resetFilters();
   if (t.dataset.tday != null) { T.date = t.dataset.tday === "0" ? todayStr() : addDays(T.date, Number(t.dataset.tday)); return renderTide(); }
   if (t.dataset.tdate) { T.date = t.dataset.tdate; renderTide(); return window.scrollTo(0, 0); }
   if (t.matches("nav.tabs button")) { if (t.dataset.tab === "fish") S.fishView = ""; return setTab(t.dataset.tab); }
